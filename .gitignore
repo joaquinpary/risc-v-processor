@@ -1,4 +1,5 @@
 *.cache/
+*.gen/
 *.hw/
 *.ip_user_files/
 *.sim/
