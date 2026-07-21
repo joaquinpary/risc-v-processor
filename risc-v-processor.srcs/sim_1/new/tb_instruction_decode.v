@@ -17,7 +17,8 @@ module tb_instruction_decode;
     wire [31:0]  read_data_1_o;
     wire [31:0]  read_data_2_o;
     wire [31:0]  imm_gen_o;
-    wire [3:0]   alu_control_o;
+    wire [2:0]   funct3_o;
+    wire         bit30_o;
     wire [4:0]   rd_o;
 
     instruction_decode uut (
@@ -35,7 +36,8 @@ module tb_instruction_decode;
         .read_data_1_o (read_data_1_o),
         .read_data_2_o (read_data_2_o),
         .imm_gen_o     (imm_gen_o),
-        .alu_control_o (alu_control_o),
+        .funct3_o      (funct3_o),
+        .bit30_o       (bit30_o),
         .rd_o          (rd_o)
     );
 
@@ -167,8 +169,8 @@ module tb_instruction_decode;
             read_data_1_o, (read_data_1_o === 32'h0) ? "OK" : "FAIL");
 
         // ---------------------------------------------------------------------
-        $display("--- alu_control_o note ---");
-        $display("  alu_control_o = %h (UNDECLARED in decode; expected to be 'x' until an ALU control sub-module is added)", alu_control_o);
+        $display("--- funct3 and bit30 forwarding ---");
+        $display("  funct3_o = %b | bit30_o = %b", funct3_o, bit30_o);
 
         $display("--- End of decode test ---");
         $finish;
