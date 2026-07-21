@@ -37,20 +37,23 @@ module instruction_decode(
     output wire [31:0]  read_data_1_o,
     output wire [31:0]  read_data_2_o,
     output wire [31:0]  imm_gen_o,
-    output wire [3:0]   alu_control_o,
+    output wire [2:0]   funct3_o,
+    output wire         bit30_o,
     output wire [4:0]   rd_o
     );
-    
+
     wire [4:0] rs1_addr = instruction_i[19:15];
     wire [4:0] rs2_addr = instruction_i[24:20];
     wire [6:0] opcode   = instruction_i[6:0];
     wire [2:0] funct3   = instruction_i[14:12];
     wire       bit30    = instruction_i[30];
-    
+
     assign pc_o = pc_i;
     assign pc_plus_4_o = pc_plus_4_i;
-    
+
     assign rd_o = instruction_i[11:7];
+    assign funct3_o = funct3;
+    assign bit30_o = bit30;
     
     register register (
         .clk        (clk),
