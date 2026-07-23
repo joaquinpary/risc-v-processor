@@ -1,9 +1,6 @@
 `timescale 1ns / 1ps
 
-module execute(
-    input wire          clk,
-    input wire          reset,
-    
+module execute(    
     input wire  [9:0]   control_i,
     input wire  [31:0]  pc_i,
     input wire  [31:0]  pc_plus_4_i,
@@ -17,7 +14,9 @@ module execute(
     output wire [31:0]  pc_plus_4_o,
     output wire [31:0]  pc_branch_o,
     output wire         zero_o,
-    output wire [31:0]  result_o
+    output wire [31:0]  result_o,
+    output wire [31:0]  rs2_data_o,
+    output wire [2:0]   funct3_o
     );
     
     wire    [1:0]   alu_op = control_i[9:8];
@@ -52,5 +51,7 @@ module execute(
     
     assign control_o = control_i[6:0];
     assign pc_plus_4_o = pc_plus_4_i;
+    assign rs2_data_o = rs2_data_i;
+    assign funct3_o = funct3_i;
 
 endmodule
