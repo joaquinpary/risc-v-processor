@@ -7,7 +7,7 @@ module tb_if_id_ex;
 
     // IF inputs
     reg          pc_write_en_i;
-    reg          branch_sel_i;
+    reg          pc_src_i;
     reg  [31:0]  branch_target_i;
     reg          ins_write_en_i;
     reg  [31:0]  instruction_i;
@@ -20,8 +20,9 @@ module tb_if_id_ex;
 
     // ID inputs (driven from a fake WB stage)
     reg  [4:0]   id_rd_i;
-    reg  [31:0]  id_write_data_i;
+    reg  [31:0]  id_reg_data_i;
     reg          id_reg_write_i;
+    reg  [5:0]   id_debug_reg_addr;
 
     // ID outputs
     wire [31:0]  id_pc_o;
@@ -29,6 +30,7 @@ module tb_if_id_ex;
     wire [9:0]   control_bus_o;
     wire [31:0]  read_data_1_o;
     wire [31:0]  read_data_2_o;
+    wire [31:0]  id_debug_reg_data;
     wire [31:0]  imm_gen_o;
     wire [2:0]   funct3_o;
     wire         bit30_o;
@@ -41,12 +43,14 @@ module tb_if_id_ex;
     wire         ex_zero_o;
     wire [31:0]  ex_result_o;
     wire [31:0]  ex_rs2_data_o;
+    wire [2:0]   ex_funct3_o;
+    wire [4:0]   ex_rd_o;
 
     instruction_fetch u_if (
         .clk(clk),
         .reset(reset),
         .pc_write_en_i(pc_write_en_i),
-        .branch_sel_i(branch_sel_i),
+        .pc_src_i(pc_src_i),
         .branch_target_i(branch_target_i),
         .ins_write_en_i(ins_write_en_i),
         .instruction_i(instruction_i),
@@ -63,8 +67,10 @@ module tb_if_id_ex;
         .pc_plus_4_i   (pc_plus_4_o),
         .instruction_i (if_instr_o),
         .rd_i          (id_rd_i),
-        .write_data_i  (id_write_data_i),
+        .reg_data_i      (id_reg_data_i),
         .reg_write_i   (id_reg_write_i),
+        .debug_reg_addr_i(id_debug_reg_addr),
+        .debug_reg_data_o(id_debug_reg_data),
         .pc_o          (id_pc_o),
         .pc_plus_4_o   (id_pc_plus_4_o),
         .control_bus_o (control_bus_o),
@@ -85,12 +91,15 @@ module tb_if_id_ex;
         .rs2_data_i    (read_data_2_o),
         .funct3_i      (funct3_o),
         .bit30_i       (bit30_o),
+        .rd_i          (rd_o),
         .control_o     (ex_control_o),
         .pc_plus_4_o   (ex_pc_plus_4_o),
         .pc_branch_o   (ex_pc_branch_o),
         .zero_o        (ex_zero_o),
         .result_o      (ex_result_o),
-        .rs2_data_o    (ex_rs2_data_o)
+        .rs2_data_o    (ex_rs2_data_o),
+        .funct3_o      (ex_funct3_o),
+        .rd_o          (ex_rd_o)
     );
 
     always #5 clk = ~clk;
@@ -114,14 +123,15 @@ module tb_if_id_ex;
         clk = 0;
         reset = 1;
         pc_write_en_i = 0;
-        branch_sel_i = 0;
+        pc_src_i = 0;
         branch_target_i = 0;
         ins_write_en_i = 0;
         instruction_i = 0;
         mem_addr_i = 0;
         id_rd_i = 0;
-        id_write_data_i = 0;
+        id_reg_data_i = 0;
         id_reg_write_i = 0;
+        id_debug_reg_addr = 6'd0;
 
         $display("--- Loading 8 instructions ---");
         #10 reset = 0;
@@ -142,7 +152,7 @@ module tb_if_id_ex;
 
         $display("--- Pipeline run: 8 cycles ---");
         pc_write_en_i = 1'b1;
-        branch_sel_i = 1'b0;
+        pc_src_i = 1'b0;
         id_reg_write_i = 1'b0;
 
         for (i = 0; i < 8; i = i + 1) begin
@@ -154,13 +164,13 @@ module tb_if_id_ex;
 
         $display("--- Branch target scenario ---");
         // In cyc 8 the branch was just fetched. Activate branch_sel to land on pc=0x40.
-        branch_sel_i = 1'b1;
+        pc_src_i = 1'b1;
         branch_target_i = 32'h0000_0040;
 
         @(posedge clk); #1;
         $display("Cyc %2d | IF pc=%h instr=%h | ID rd=%2d imm=%h ctl=%b funct3=%b bit30=%b | EX result=%h zero=%b br_pc=%h pc+4=%h  (branch taken)",
             8, pc_o, if_instr_o, rd_o, imm_gen_o, control_bus_o, funct3_o, bit30_o, ex_result_o, ex_zero_o, ex_pc_branch_o, ex_pc_plus_4_o);
-        branch_sel_i = 1'b0;
+        pc_src_i = 1'b0;
 
         @(posedge clk); #1;
         $display("Cyc %2d | IF pc=%h instr=%h | ID rd=%2d imm=%h ctl=%b funct3=%b bit30=%b | EX result=%h zero=%b pc+4=%h  (post-branch NOP)",

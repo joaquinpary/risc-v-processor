@@ -5,7 +5,7 @@ module instruction_fetch(
     input wire          reset,
     
     input wire          pc_write_en_i,      // Flag to Enable PC Write (DEBUG MODE)
-    input wire          branch_sel_i,       // Branch flag
+    input wire          pc_src_i,           // Branch flag
     input wire  [31:0]  branch_target_i,    // Branch 
     input wire          ins_write_en_i,     // Flag for Instruction Load
     input wire  [31:0]  instruction_i,      // Intruction Load (UART)
@@ -25,7 +25,7 @@ module instruction_fetch(
             pc_reg <= 32'h0000_0000;
         end else if (pc_write_en_i) begin
     // MUX2
-            if (branch_sel_i) begin
+            if (pc_src_i) begin
                 pc_reg <= branch_target_i;
             end else begin
                 pc_reg <= pc_reg + 32'd4;

@@ -8,9 +8,11 @@ module instruction_decode(
     input wire  [31:0]  pc_plus_4_i,
     input wire  [31:0]  instruction_i,
     input wire  [4:0]   rd_i,
-    input wire  [31:0]  write_data_i,
+    input wire  [31:0]  reg_data_i,
     input wire          reg_write_i,
+    input wire  [5:0]   debug_reg_addr_i,
     
+    output wire [31:0]  debug_reg_data_o,
     output wire [31:0]  pc_o,
     output wire [31:0]  pc_plus_4_o,
     output wire [9:0]   control_bus_o,
@@ -42,7 +44,9 @@ module instruction_decode(
         .rs1        (rs1_addr),
         .rs2        (rs2_addr),
         .rd         (rd_i),
-        .write_data (write_data_i),
+        .write_data (reg_data_i),
+        .debug_reg_addr_i(debug_reg_addr_i),
+        .debug_reg_data_o(debug_reg_data_o),
         .read_data1 (read_data_1_o),
         .read_data2 (read_data_2_o)
     );
