@@ -4,6 +4,7 @@ module tb_top;
 
     reg          clk;
     reg          reset;
+    reg          pc_write_en;
     reg  [31:0]  instruction_i;
     reg          ins_write_en_i;
     reg  [31:0]  ins_addr_i;
@@ -17,6 +18,7 @@ module tb_top;
     top uut (
         .clk              (clk),
         .reset            (reset),
+        .pc_write_en_i    (pc_write_en),
         .instruction_i    (instruction_i),
         .ins_write_en_i   (ins_write_en_i),
         .ins_addr_i       (ins_addr_i),
@@ -46,15 +48,15 @@ module tb_top;
         $display("=== Top-Level Pipeline Testbench ===");
 
         clk = 0;
-        reset = 1;
+        reset = 1;        // hold reset to keep latches empty
+        pc_write_en = 0;  // hold PC during instruction load
         instruction_i = 0;
         ins_write_en_i = 0;
         ins_addr_i = 0;
         debug_reg_addr_i = 0;
         debug_mem_addr_i = 0;
 
-        $display("--- Loading 6 instructions ---");
-        #10 reset = 0;
+        $display("--- Loading 6 instructions (PC + latches frozen via reset) ---");
 
         // addi x1,x0,42   addi x2,x0,100  lw x3, 8(x0)
         // sw x0, 0(x0)    add x4,x1,x2    beq x0,x0,+8
@@ -67,7 +69,13 @@ module tb_top;
         for (i = 6; i < 17; i = i + 1)
             load_instr(i[9:0], 32'h00000013);
 
+        $display("--- Starting program (deassert reset, enable PC) ---");
+        @(posedge clk); #1;  // align with clock edge
+        reset = 0;            // deassert reset -> latches start capturing
+        pc_write_en = 1;      // start the program
+
         $display("--- Pipeline run: 20 cycles (debug x1 each cycle to catch WB) ---");
+        debug_reg_addr_i = 6'd1;  // set BEFORE loop so debug_reg_data_o reflects x1
         for (i = 0; i < 20; i = i + 1) begin
             @(posedge clk); #1;
             $display("Cyc %2d | pc_o=%h | x1=%h (WB saw addi? when x1=0x2A)",
@@ -88,11 +96,11 @@ module tb_top;
         debug_reg_addr_i = 6'd3; #1;
         $display("  x3 = %h", debug_reg_data_o);
 
-        $display("--- Inspect x4 via debug (add x1+x2: should be 0x96 if forwarding works) ---");
+        $display("--- Inspect x4 via debug (add x1+x2: should be 0x8E = 42+100 = 142) ---");
         debug_reg_addr_i = 6'd4; #1;
-        $display("  x4 = %h (exp 0x00000096 if forwarding; got %s)",
+        $display("  x4 = %h (exp 0x0000008E = 42+100; got %s)",
             debug_reg_data_o,
-            (debug_reg_data_o === 32'h0000_0096) ? "OK (forwarding works)" :
+            (debug_reg_data_o === 32'h0000_008E) ? "OK (forwarding works)" :
             (debug_reg_data_o === 32'h0000_0000) ? "NO forward (stale x0)" : "other");
 
         $display("--- Cycle-by-cycle WB observation (read x4 each cycle) ---");
@@ -101,9 +109,6 @@ module tb_top;
             @(posedge clk); #1;
             $display("  Cyc %2d | x4=%h | pc_o=%h", i, debug_reg_data_o, pc_o);
         end
-
-        $display("--- End of top test ---");
-        $finish;
 
         $display("--- End of top test ---");
         $finish;

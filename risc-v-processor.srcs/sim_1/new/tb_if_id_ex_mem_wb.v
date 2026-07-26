@@ -8,7 +8,7 @@ module tb_if_id_ex_mem_wb;
     // IF inputs
     reg          pc_write_en_i;
     reg          pc_src_i;
-    reg  [31:0]  branch_target_i;
+    reg  [31:0]  pc_branch_i;
     reg          ins_write_en_i;
     reg  [31:0]  instruction_i;
     reg  [31:0]  mem_addr_i;
@@ -66,7 +66,7 @@ module tb_if_id_ex_mem_wb;
         .reset(reset),
         .pc_write_en_i(pc_write_en_i),
         .pc_src_i(pc_src_i),
-        .branch_target_i(branch_target_i),
+        .pc_branch_i(pc_branch_i),
         .ins_write_en_i(ins_write_en_i),
         .instruction_i(instruction_i),
         .mem_addr_i(mem_addr_i),
@@ -169,7 +169,7 @@ module tb_if_id_ex_mem_wb;
         reset = 1;
         pc_write_en_i = 0;
         pc_src_i = 0;
-        branch_target_i = 0;
+        pc_branch_i = 0;
         ins_write_en_i = 0;
         instruction_i = 0;
         mem_addr_i = 0;
@@ -206,7 +206,7 @@ module tb_if_id_ex_mem_wb;
 
         $display("--- Branch decision: beq x0,x0 ---");
         pc_src_i = 1'b1;
-        branch_target_i = 32'h0000_0040;
+        pc_branch_i = 32'h0000_0040;
         @(posedge clk); #1;
         $display("Cyc %0d | IF pc=%h | ID rd=%2d | EX zero=%b | MEM pc_src=%b | WB reg_we=%b rd=%2d wdata=%h",
             6, pc_o, rd_o, ex_zero_o, mem_pc_src_o, wb_reg_write_o, wb_rd_o, wb_reg_data_write_o);

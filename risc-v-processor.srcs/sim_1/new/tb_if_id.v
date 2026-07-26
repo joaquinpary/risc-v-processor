@@ -8,7 +8,7 @@ module tb_if_id;
     // IF inputs
     reg          pc_write_en_i;
     reg          pc_src_i;
-    reg  [31:0]  branch_target_i;
+    reg  [31:0]  pc_branch_i;
     reg          ins_write_en_i;
     reg  [31:0]  instruction_i;
     reg  [31:0]  mem_addr_i;
@@ -41,7 +41,7 @@ module tb_if_id;
         .reset(reset),
         .pc_write_en_i(pc_write_en_i),
         .pc_src_i(pc_src_i),
-        .branch_target_i(branch_target_i),
+        .pc_branch_i(pc_branch_i),
         .ins_write_en_i(ins_write_en_i),
         .instruction_i(instruction_i),
         .mem_addr_i(mem_addr_i),
@@ -94,7 +94,7 @@ module tb_if_id;
         reset = 1;
         pc_write_en_i = 0;
         pc_src_i = 0;
-        branch_target_i = 0;
+        pc_branch_i = 0;
         ins_write_en_i = 0;
         instruction_i = 0;
         mem_addr_i = 0;
@@ -136,7 +136,7 @@ module tb_if_id;
         // Activate branch_sel right after that edge so PC_REG takes branch_target
         // on the next edge.
         pc_src_i = 1'b1;
-        branch_target_i = 32'h0000_0040;  // word 16
+        pc_branch_i = 32'h0000_0040;  // word 16
 
         @(posedge clk); #1;
         $display("Cyc %2d | IF: pc=%h if_instr=%h || ID: rd_o=%2d rdata1=%h rdata2=%h imm=%h ctl=%b  (branch taken)",

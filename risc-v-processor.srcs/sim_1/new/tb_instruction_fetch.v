@@ -6,7 +6,7 @@ module tb_instruction_fetch;
     reg          reset;
     reg          pc_write_en_i;
     reg          pc_src_i;
-    reg  [31:0]  branch_target_i;
+    reg  [31:0]  pc_branch_i;
     reg          ins_write_en_i;
     reg  [31:0]  instruction_i;
     reg  [31:0]  mem_addr_i;
@@ -19,7 +19,7 @@ module tb_instruction_fetch;
         .reset(reset),
         .pc_write_en_i(pc_write_en_i),
         .pc_src_i(pc_src_i),
-        .branch_target_i(branch_target_i),
+        .pc_branch_i(pc_branch_i),
         .ins_write_en_i(ins_write_en_i),
         .instruction_i(instruction_i),
         .mem_addr_i(mem_addr_i),
@@ -49,7 +49,7 @@ module tb_instruction_fetch;
         reset = 1;
         pc_write_en_i = 0;
         pc_src_i = 0;
-        branch_target_i = 0;
+        pc_branch_i = 0;
         ins_write_en_i = 0;
         instruction_i = 0;
         mem_addr_i = 0;
@@ -106,7 +106,7 @@ module tb_instruction_fetch;
             (instruction_o === expected_instr) ? "OK" : "FAIL");
 
         pc_src_i = 1'b1;
-        branch_target_i = 32'h00000040;  // 0x40 = word 16
+        pc_branch_i = 32'h00000040;  // 0x40 = word 16
 
         // Cycle 9: PC_REG updates to branch_target
         @(posedge clk); #1;

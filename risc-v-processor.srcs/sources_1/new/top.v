@@ -3,6 +3,7 @@
 module top(
     input wire          clk,
     input wire          reset,
+    input wire          pc_write_en_i,      // Enable PC writes (hold low during instruction load)
     input wire  [31:0]  instruction_i,      // Instruction
     input wire          ins_write_en_i,     // Enable Write Instruction
     input wire  [31:0]  ins_addr_i,         // Address Instruction
@@ -91,9 +92,9 @@ module top(
     instruction_fetch u_if (
         .clk            (clk),
         .reset          (reset),
-        .pc_write_en_i  (1'b1),
+        .pc_write_en_i  (pc_write_en_i),
         .pc_src_i       (pc_src_mem),
-        .branch_target_i(pc_branch_mem),
+        .pc_branch_i    (pc_branch_mem),
         .ins_write_en_i (ins_write_en_i),
         .instruction_i  (instruction_i),
         .mem_addr_i     (ins_addr_i),
