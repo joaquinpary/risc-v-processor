@@ -7,17 +7,22 @@ module memory(
     input wire  [9:0]   debug_addr_i,
     input wire  [6:0]   control_i,
     input wire  [31:0]  pc_plus_4_i,
+    input wire  [31:0]  pc_branch_i,
     input wire          zero_i,
     input wire  [31:0]  result_i,
     input wire  [31:0]  data2_i,
     input wire  [2:0]   funct3_i,
+    input wire  [4:0]   rd_i,
     
     output wire [2:0]   control_o,
     output wire [31:0]  pc_plus_4_o,
     output wire         pc_src_o,
+    output wire [31:0]  pc_branch_o,
+    output wire [31:0]  result_o,
     output wire [31:0]  read_data_o,
     output wire [31:0]  mem_addr_o,
-    output wire [31:0]  debug_data_o
+    output wire [31:0]  debug_data_o,
+    output wire [4:0]   rd_o
     );
     
     wire    [9:0]   mem_addr = data2_i[9:0];
@@ -66,5 +71,8 @@ module memory(
     assign mem_addr_o = data2_i;
     assign control_o = control_i[2:0];
     assign pc_plus_4_o = pc_plus_4_i;
+    assign result_o = result_i;
+    assign rd_o = rd_i;
+    assign pc_branch_o = pc_branch_i;
     
 endmodule

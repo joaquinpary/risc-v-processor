@@ -5,8 +5,8 @@ module tb_instruction_fetch;
     reg          clk;
     reg          reset;
     reg          pc_write_en_i;
-    reg          branch_sel_i;
-    reg  [31:0]  branch_target_i;
+    reg          pc_src_i;
+    reg  [31:0]  pc_branch_i;
     reg          ins_write_en_i;
     reg  [31:0]  instruction_i;
     reg  [31:0]  mem_addr_i;
@@ -18,8 +18,8 @@ module tb_instruction_fetch;
         .clk(clk),
         .reset(reset),
         .pc_write_en_i(pc_write_en_i),
-        .branch_sel_i(branch_sel_i),
-        .branch_target_i(branch_target_i),
+        .pc_src_i(pc_src_i),
+        .pc_branch_i(pc_branch_i),
         .ins_write_en_i(ins_write_en_i),
         .instruction_i(instruction_i),
         .mem_addr_i(mem_addr_i),
@@ -48,8 +48,8 @@ module tb_instruction_fetch;
         clk = 0;
         reset = 1;
         pc_write_en_i = 0;
-        branch_sel_i = 0;
-        branch_target_i = 0;
+        pc_src_i = 0;
+        pc_branch_i = 0;
         ins_write_en_i = 0;
         instruction_i = 0;
         mem_addr_i = 0;
@@ -78,7 +78,7 @@ module tb_instruction_fetch;
 
         $display("--- Sequential fetch (8 cycles) ---");
         pc_write_en_i = 1'b1;
-        branch_sel_i = 1'b0;
+        pc_src_i = 1'b0;
 
         for (i = 0; i < 8; i = i + 1) begin
             case (i)
@@ -105,15 +105,15 @@ module tb_instruction_fetch;
             8, pc_o, instruction_o, expected_instr,
             (instruction_o === expected_instr) ? "OK" : "FAIL");
 
-        branch_sel_i = 1'b1;
-        branch_target_i = 32'h00000040;  // 0x40 = word 16
+        pc_src_i = 1'b1;
+        pc_branch_i = 32'h00000040;  // 0x40 = word 16
 
         // Cycle 9: PC_REG updates to branch_target
         @(posedge clk); #1;
         $display("Ciclo %0d | pc=%h (esp 0x00000040) | instr=%h (esp 00800413) | %s  (branch taken - delay slot)",
             9, pc_o, instruction_o,
             (pc_o === 32'h00000040 && instruction_o === 32'h00800413) ? "OK" : "FAIL");
-        branch_sel_i = 1'b0;
+        pc_src_i = 1'b0;
 
         @(posedge clk); #1;
         $display("Ciclo %0d | pc=%h (esp 00000044) | instr=%h (esp 00000013=NOP) | %s  (Jump instruction read)",

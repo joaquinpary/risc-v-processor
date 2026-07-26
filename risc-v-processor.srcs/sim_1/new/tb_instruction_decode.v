@@ -8,9 +8,11 @@ module tb_instruction_decode;
     reg  [31:0]  pc_plus_4_i;
     reg  [31:0]  instruction_i;
     reg  [4:0]   rd_i;
-    reg  [31:0]  write_data_i;
+    reg  [31:0]  reg_data_i;
     reg          reg_write_i;
+    reg  [5:0]   debug_reg_addr;
 
+    wire [31:0]  debug_reg_data;
     wire [31:0]  pc_o;
     wire [31:0]  pc_plus_4_o;
     wire [9:0]   control_bus_o;
@@ -22,23 +24,25 @@ module tb_instruction_decode;
     wire [4:0]   rd_o;
 
     instruction_decode uut (
-        .clk           (clk),
-        .reset         (reset),
-        .pc_i          (pc_i),
-        .pc_plus_4_i   (pc_plus_4_i),
-        .instruction_i (instruction_i),
-        .rd_i          (rd_i),
-        .write_data_i  (write_data_i),
-        .reg_write_i   (reg_write_i),
-        .pc_o          (pc_o),
-        .pc_plus_4_o   (pc_plus_4_o),
-        .control_bus_o (control_bus_o),
-        .read_data_1_o (read_data_1_o),
-        .read_data_2_o (read_data_2_o),
-        .imm_gen_o     (imm_gen_o),
-        .funct3_o      (funct3_o),
-        .bit30_o       (bit30_o),
-        .rd_o          (rd_o)
+        .clk             (clk),
+        .reset           (reset),
+        .pc_i            (pc_i),
+        .pc_plus_4_i     (pc_plus_4_i),
+        .instruction_i   (instruction_i),
+        .rd_i            (rd_i),
+        .reg_data_i      (reg_data_i),
+        .reg_write_i     (reg_write_i),
+        .debug_reg_addr_i(debug_reg_addr),
+        .debug_reg_data_o(debug_reg_data),
+        .pc_o            (pc_o),
+        .pc_plus_4_o     (pc_plus_4_o),
+        .control_bus_o   (control_bus_o),
+        .read_data_1_o   (read_data_1_o),
+        .read_data_2_o   (read_data_2_o),
+        .imm_gen_o       (imm_gen_o),
+        .funct3_o        (funct3_o),
+        .bit30_o         (bit30_o),
+        .rd_o            (rd_o)
     );
 
     always #5 clk = ~clk;
@@ -59,8 +63,9 @@ module tb_instruction_decode;
         pc_plus_4_i = 32'h0;
         instruction_i = 32'h0;
         rd_i = 5'd0;
-        write_data_i = 32'h0;
+        reg_data_i = 32'h0;
         reg_write_i = 1'b0;
+        debug_reg_addr = 6'd0;
 
         #12 reset = 0;
         @(posedge clk); #1;
@@ -77,7 +82,7 @@ module tb_instruction_decode;
         $display("--- Decode addi x1, x0, 5  (I-type arith) ---");
         // addi rd=x1, rs1=x0, imm=5  =>  0000_0000_0101_00000_000_00000_0010011
         instruction_i = 32'h005_00093;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         #1;
         show("addi x1,x0,5");
         $display("  read_data_1_o (x0) = %h (exp 0) %s", read_data_1_o, (read_data_1_o === 32'h0) ? "OK" : "FAIL");
@@ -87,7 +92,7 @@ module tb_instruction_decode;
         $display("--- Decode lw x5, -8(x10)  (I-type load) ---");
         // lw rd=x5, rs1=x10, imm=-8 => imm=0xFF8, opcode=0000011
         instruction_i = 32'hFF8_12503;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         #1;
         show("lw x5,-8(x10)");
 
@@ -96,7 +101,7 @@ module tb_instruction_decode;
         // sw rs2=x14, rs1=x10, imm=10 => imm[11:5]=0000000, imm[4:0]=01010
         // Encoding: 0000000_01010_01110_01010_010_0100011 = 0x00412523
         instruction_i = 32'h004_12523;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         #1;
         show("sw x14,10(x10)");
 
@@ -108,7 +113,7 @@ module tb_instruction_decode;
         // funct3=000, rs1=00000, rs2=00000, opcode=1100011
         // Hex: 0x00000_063 (hand-checked)
         instruction_i = 32'h0000_0063;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         #1;
         show("beq x0,x0,+8");
 
@@ -118,7 +123,7 @@ module tb_instruction_decode;
         // imm[31:12]=0x12345 -> 0001_0010_0011_0100_0101
         // Hex: 0x12345_537
         instruction_i = 32'h1234_5537;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         #1;
         show("lui x10,0x12345");
         $display("  imm_gen_o = %h (exp 0x12345000) %s", imm_gen_o, (imm_gen_o === 32'h1234_5000) ? "OK" : "FAIL");
@@ -130,7 +135,7 @@ module tb_instruction_decode;
         // rd=00001 -> top bits 0000_0000_0000_0000_0000_0000_0000_1_000
         // Hex: 0x00C000EF (verified in imm_gen tb)
         instruction_i = 32'h00C0_00EF;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         #1;
         show("jal x1,+16");
 
@@ -139,18 +144,18 @@ module tb_instruction_decode;
         // add rd=00011, rs1=00001, rs2=00010, funct3=000, funct7=0000000, opcode=0110011
         // Hex: 0x0020_81B3
         instruction_i = 32'h0020_81B3;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         #1;
         show("add x3,x1,x2 (no data yet)");
 
         // ---------------------------------------------------------------------
         $display("--- Write x1=0xAAAA5555 via WB path, then read it ---");
-        // Drive rd_i, write_data_i and reg_write_i from a simulated WB stage
+        // Drive rd_i, reg_data_i and reg_write_i from a simulated WB stage
         // First write on next clock edge
-        rd_i = 5'd1; write_data_i = 32'hAAAA_5555; reg_write_i = 1'b1;
+        rd_i = 5'd1; reg_data_i = 32'hAAAA_5555; reg_write_i = 1'b1;
         @(posedge clk); #1;
         // Now x1 = 0xAAAA5555. Decode a load from x1.
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         // add x3, x1, x2 -> reads rs1=x1
         instruction_i = 32'h0020_81B3;
         #1;
@@ -159,10 +164,10 @@ module tb_instruction_decode;
 
         // ---------------------------------------------------------------------
         $display("--- Test that x0 stays 0 even with write enable ---");
-        rd_i = 5'd0; write_data_i = 32'hDEAD_BEEF; reg_write_i = 1'b1;
+        rd_i = 5'd0; reg_data_i = 32'hDEAD_BEEF; reg_write_i = 1'b1;
         instruction_i = 32'h005_00093;  // addi x1, x0, 5 (reads x0)
         @(posedge clk); #1;
-        rd_i = 5'd0; write_data_i = 32'h0; reg_write_i = 1'b0;
+        rd_i = 5'd0; reg_data_i = 32'h0; reg_write_i = 1'b0;
         instruction_i = 32'h005_00093;
         #1;
         $display("  x0 must remain 0 (read x0) -> rdata1=%h %s",
@@ -171,6 +176,12 @@ module tb_instruction_decode;
         // ---------------------------------------------------------------------
         $display("--- funct3 and bit30 forwarding ---");
         $display("  funct3_o = %b | bit30_o = %b", funct3_o, bit30_o);
+
+        // ---------------------------------------------------------------------
+        $display("--- Debug port read (x1 should be 0xAAAA5555) ---");
+        debug_reg_addr = 6'd1; #1;
+        $display("  debug_reg_data (x1) = %h (exp 0xAAAA5555) %s",
+            debug_reg_data, (debug_reg_data === 32'hAAAA_5555) ? "OK" : "FAIL");
 
         $display("--- End of decode test ---");
         $finish;

@@ -9,6 +9,7 @@ module execute(
     input wire  [31:0]  rs2_data_i,
     input wire  [2:0]   funct3_i,
     input wire          bit30_i,
+    input wire  [4:0]   rd_i,
     
     output wire [6:0]   control_o,
     output wire [31:0]  pc_plus_4_o,
@@ -16,7 +17,8 @@ module execute(
     output wire         zero_o,
     output wire [31:0]  result_o,
     output wire [31:0]  rs2_data_o,
-    output wire [2:0]   funct3_o
+    output wire [2:0]   funct3_o,
+    output wire [4:0]   rd_o
     );
     
     wire    [1:0]   alu_op = control_i[9:8];
@@ -53,5 +55,6 @@ module execute(
     assign pc_plus_4_o = pc_plus_4_i;
     assign rs2_data_o = rs2_data_i;
     assign funct3_o = funct3_i;
+    assign rd_o = rd_i;
 
 endmodule
