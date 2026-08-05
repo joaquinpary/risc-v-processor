@@ -9,7 +9,7 @@ module register (
     input wire  [4:0]   rd,
     input wire  [31:0]  write_data,
     input wire  [4:0]   debug_reg_addr_i,
-    input wire  [31:0]  debug_reg_data_o,
+    output wire [31:0]  debug_reg_data_o,
     output wire [31:0]  read_data1,
     output wire [31:0]  read_data2
 );

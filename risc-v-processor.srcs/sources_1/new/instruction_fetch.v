@@ -36,7 +36,7 @@ module instruction_fetch(
     // Intruction memory
     
     instruction_memory instruction_memory (
-        .addra  (mem_addr_i[9:0]),
+        .addra  (mem_addr_i[11:2]),
         .clka   (clk),
         .dina   (instruction_i),
         .ena    (ins_write_en_i),

@@ -2,116 +2,147 @@
 
 module tb_top;
 
-    reg          clk;
-    reg          reset;
-    reg          pc_write_en;
-    reg  [31:0]  instruction_i;
-    reg          ins_write_en_i;
-    reg  [31:0]  ins_addr_i;
-    reg  [5:0]   debug_reg_addr_i;
-    reg  [9:0]   debug_mem_addr_i;
+    // BAUD_RATE=781250 and FREQ=50MHz:
+    //   CLOCK_TICK = 50M / (781250 * 16) = 4
+    //   Actual tick period = (4-1) * 20ns = 60ns
+    //   Actual BIT_PERIOD = 16 ticks * 60ns = 960ns
+    // =========================================================================
+    parameter BAUD_RATE  = 781250;
+    parameter FREQ       = 50000000;
+    parameter CLOCK_TICK = FREQ / (BAUD_RATE * 16);           // = 4
+    parameter BIT_PERIOD = 16 * (CLOCK_TICK - 1) * 20;       // = 960 ns
 
-    wire [31:0]  debug_reg_data_o;
-    wire [31:0]  debug_mem_data_o;
-    wire [31:0]  pc_o;
+    reg  clk;
+    reg  reset;
+    reg  rx_pin;
+    wire tx_pin;
 
-    top uut (
-        .clk              (clk),
-        .reset            (reset),
-        .pc_write_en_i    (pc_write_en),
-        .instruction_i    (instruction_i),
-        .ins_write_en_i   (ins_write_en_i),
-        .ins_addr_i       (ins_addr_i),
-        .debug_reg_addr_i (debug_reg_addr_i),
-        .debug_mem_addr_i (debug_mem_addr_i),
-        .debug_reg_data_o (debug_reg_data_o),
-        .debug_mem_data_o (debug_mem_data_o),
-        .pc_o             (pc_o)
+    top #(
+        .BAUD_RATE(BAUD_RATE),
+        .FREQ(FREQ)
+    ) uut (
+        .clk    (clk),
+        .reset  (reset),
+        .rx_pin (rx_pin),
+        .tx_pin (tx_pin)
     );
 
-    always #5 clk = ~clk;
+    always #10 clk = ~clk; // 50 MHz clock -> 20ns period
 
-    task load_instr(input [9:0] word_addr, input [31:0] data);
+    task uart_send_byte(input [7:0] data);
+        integer i;
         begin
-            ins_addr_i = {22'b0, word_addr[9:0]};
-            instruction_i = data;
-            ins_write_en_i = 1'b1;
-            @(posedge clk);
-            #1;
-            ins_write_en_i = 1'b0;
+            rx_pin = 0; // Start bit
+            #BIT_PERIOD;
+            for (i = 0; i < 8; i = i + 1) begin
+                rx_pin = data[i];
+                #BIT_PERIOD;
+            end
+            rx_pin = 1; // Stop bit
+            #BIT_PERIOD;
         end
     endtask
 
-    integer i;
+    task uart_send_40b(input [39:0] data);
+        begin
+            uart_send_byte(data[39:32]);
+            uart_send_byte(data[31:24]);
+            uart_send_byte(data[23:16]);
+            uart_send_byte(data[15:8]);
+            uart_send_byte(data[7:0]);
+            #(BIT_PERIOD * 3); // Gap between frames
+        end
+    endtask
+
+    integer k;
 
     initial begin
-        $display("=== Top-Level Pipeline Testbench ===");
-
+        $display("=== Top-Level Pipeline + UART Debug Testbench ===");
+        $display("    CLOCK_TICK=%0d, BIT_PERIOD=%0d ns", CLOCK_TICK, BIT_PERIOD);
+        
         clk = 0;
-        reset = 1;        // hold reset to keep latches empty
-        pc_write_en = 0;  // hold PC during instruction load
-        instruction_i = 0;
-        ins_write_en_i = 0;
-        ins_addr_i = 0;
-        debug_reg_addr_i = 0;
-        debug_mem_addr_i = 0;
+        reset = 1;
+        rx_pin = 1;
+        
+        #200;
+        reset = 0;
+        #200;
 
-        $display("--- Loading 6 instructions (PC + latches frozen via reset) ---");
+        $display("--- Sending RESET command (0x03) to Debug Unit ---");
+        uart_send_40b({8'h03, 32'h00000000});
 
-        // addi x1,x0,42   addi x2,x0,100  lw x3, 8(x0)
-        // sw x0, 0(x0)    add x4,x1,x2    beq x0,x0,+8
-        load_instr(10'd0,  32'h02A00093);  // addi x1,x0,42
-        load_instr(10'd1,  32'h06400113);  // addi x2,x0,100
-        load_instr(10'd2,  32'h0080_2183);  // lw x3, 8(x0)
-        load_instr(10'd3,  32'h00002023);  // sw x0, 0(x0)
-        load_instr(10'd4,  32'h0020_8233);  // add x4,x1,x2
-        load_instr(10'd5,  32'h0000_0463);  // beq x0,x0,+8
-        for (i = 6; i < 17; i = i + 1)
-            load_instr(i[9:0], 32'h00000013);
+        $display("--- Loading instructions via UART (0x10) ---");
+        // addi x1,x0,42
+        uart_send_40b({8'h10, 32'h02A00093});
+        // addi x2,x0,100
+        uart_send_40b({8'h10, 32'h06400113});
+        // lw x3, 8(x0)
+        uart_send_40b({8'h10, 32'h0080_2183});
+        // sw x0, 0(x0)
+        uart_send_40b({8'h10, 32'h00002023});
+        // add x4,x1,x2
+        uart_send_40b({8'h10, 32'h0020_8233});
+        // beq x0,x0,+8
+        uart_send_40b({8'h10, 32'h0000_0463});
 
-        $display("--- Starting program (deassert reset, enable PC) ---");
-        @(posedge clk); #1;  // align with clock edge
-        reset = 0;            // deassert reset -> latches start capturing
-        pc_write_en = 1;      // start the program
-
-        $display("--- Pipeline run: 20 cycles (debug x1 each cycle to catch WB) ---");
-        debug_reg_addr_i = 6'd1;  // set BEFORE loop so debug_reg_data_o reflects x1
-        for (i = 0; i < 20; i = i + 1) begin
-            @(posedge clk); #1;
-            $display("Cyc %2d | pc_o=%h | x1=%h (WB saw addi? when x1=0x2A)",
-                i, pc_o, debug_reg_data_o);
+        // Load zero instructions (0x00000000) so HALT triggers
+        // (halt requires instruction_id == 0 && pc_if > 0x10)
+        for (k = 0; k < 10; k = k + 1) begin
+            uart_send_40b({8'h10, 32'h00000000});
         end
 
-        $display("--- Inspect x1 via debug (should be 42 = 0x2A) ---");
-        debug_reg_addr_i = 6'd1; #1;
-        $display("  x1 = %h (exp 0x0000002A) %s",
-            debug_reg_data_o, (debug_reg_data_o === 32'h0000_002A) ? "OK" : "FAIL");
+        $display("--- Sending RUN command (0x02) ---");
+        uart_send_40b({8'h02, 32'h00000000});
 
-        $display("--- Inspect x2 via debug (should be 100 = 0x64) ---");
-        debug_reg_addr_i = 6'd2; #1;
-        $display("  x2 = %h (exp 0x00000064) %s",
-            debug_reg_data_o, (debug_reg_data_o === 32'h0000_0064) ? "OK" : "FAIL");
+        $display("--- Waiting for processor to execute and HALT... ---");
+        #50000;
 
-        $display("--- Inspect x3 via debug (lw: should be whatever data_mem[2] has) ---");
-        debug_reg_addr_i = 6'd3; #1;
-        $display("  x3 = %h", debug_reg_data_o);
+        $display(">> [TB DIRECT SNOOP] Register file internal check:");
+        $display(">> x1 = %0d", uut.u_id.register.regs[1]);
+        $display(">> x2 = %0d", uut.u_id.register.regs[2]);
+        $display(">> x4 = %0d", uut.u_id.register.regs[4]);
 
-        $display("--- Inspect x4 via debug (add x1+x2: should be 0x8E = 42+100 = 142) ---");
-        debug_reg_addr_i = 6'd4; #1;
-        $display("  x4 = %h (exp 0x0000008E = 42+100; got %s)",
-            debug_reg_data_o,
-            (debug_reg_data_o === 32'h0000_008E) ? "OK (forwarding works)" :
-            (debug_reg_data_o === 32'h0000_0000) ? "NO forward (stale x0)" : "other");
+        $display("--- Querying Register x1 (0x20, expect 42 = 0x2A) ---");
+        uart_send_40b({8'h20, 27'h0, 5'd1});
+        #(BIT_PERIOD * 10 * 7);
 
-        $display("--- Cycle-by-cycle WB observation (read x4 each cycle) ---");
-        debug_reg_addr_i = 6'd4;
-        for (i = 0; i < 15; i = i + 1) begin
-            @(posedge clk); #1;
-            $display("  Cyc %2d | x4=%h | pc_o=%h", i, debug_reg_data_o, pc_o);
-        end
+        $display("--- Querying Register x2 (0x20, expect 100 = 0x64) ---");
+        uart_send_40b({8'h20, 27'h0, 5'd2});
+        #(BIT_PERIOD * 10 * 7);
 
-        $display("--- End of top test ---");
+        $display("--- Querying Register x4 (0x20, expect 142 = 0x8E) ---");
+        uart_send_40b({8'h20, 27'h0, 5'd4});
+        #(BIT_PERIOD * 10 * 7);
+
+        $display("--- Querying PC (0x40) ---");
+        uart_send_40b({8'h40, 32'h00000000});
+        #(BIT_PERIOD * 10 * 7);
+
+        $display("--- Querying Latch ID/EX PC (0x50, ID 4) ---");
+        uart_send_40b({8'h50, 32'h00000004});
+        #(BIT_PERIOD * 10 * 7);
+
+        $display("--- End of UART test ---");
         $finish;
+    end
+
+    always @(posedge clk) begin
+        if (uut.u_debug_unit.tx_start_o) begin
+            $display("[TB SNOOP] FPGA TX response: CMD=0x%h | DATA=0x%h (%0d)", 
+                uut.u_debug_unit.tx_data_o[39:32], 
+                uut.u_debug_unit.tx_data_o[31:0],
+                uut.u_debug_unit.tx_data_o[31:0]);
+        end
+    end
+
+    // Debug Unit status monitor
+    always @(posedge clk) begin
+        if (uut.u_uart_if.rx_done_40b_o) begin
+            $display("[TB MONITOR] UART RX assembled: CMD=0x%h | DATA=0x%h | DU_state=%0d",
+                uut.u_uart_if.rx_data_40b_o[39:32],
+                uut.u_uart_if.rx_data_40b_o[31:0],
+                uut.u_debug_unit.state);
+        end
     end
 
 endmodule
