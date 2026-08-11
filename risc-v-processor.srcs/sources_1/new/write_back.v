@@ -3,13 +3,13 @@
 // =============================================================================
 // write_back
 //
-// Elige que se escribe en el banco de registros y, para las cargas, extrae el
-// byte o la media palabra que corresponde.
+// Picks what gets written to the register file and, for the loads, extracts
+// the right byte or half word.
 //
-// La extraccion va aca y no en memory.v porque la BRAM entrega el dato recien
-// durante el ciclo WB. Los datos necesarios llegan por el latch MEM/WB:
-// funct3_i dice el tamano y si extiende signo, y result_i es la direccion
-// efectiva, asi que result_i[1:0] indica el byte dentro de la palabra.
+// The extraction goes here and not in memory.v because the BRAM only delivers
+// the data during the WB cycle. Everything needed arrives through the MEM/WB
+// latch: funct3_i tells the size and whether to sign extend, and result_i is
+// the effective address, so result_i[1:0] gives the byte inside the word.
 // =============================================================================
 
 module write_back(
@@ -29,11 +29,11 @@ module write_back(
     wire    [1:0]   mem_to_reg = control_i[1:0];
 
     // ---------------------------------------------------------------
-    // Extraccion del sub-word leido
+    // Sub-word extraction of the loaded data
     // ---------------------------------------------------------------
     wire    [1:0]   byte_off = result_i[1:0];
 
-    // Se corre la palabra para dejar el dato pedido en la parte baja
+    // Shift the word so the requested data ends up in the low part
     wire    [31:0]  aligned  = read_data_i >> (8 * byte_off);
 
     wire    [7:0]   byte_sel = aligned[7:0];
@@ -43,7 +43,7 @@ module write_back(
 
     always @(*) begin
         case (funct3_i)
-            // lb y lh extienden el signo; lbu y lhu rellenan con ceros
+            // lb and lh sign extend; lbu and lhu pad with zeros
             3'b000:  load_data = {{24{byte_sel[7]}},  byte_sel};   // lb
             3'b001:  load_data = {{16{half_sel[15]}}, half_sel};   // lh
             3'b010:  load_data = read_data_i;                      // lw
@@ -54,7 +54,7 @@ module write_back(
     end
 
     // ---------------------------------------------------------------
-    // MUX de escritura al banco de registros
+    // Write MUX to the register file
     // ---------------------------------------------------------------
     always @(*) begin
         case (mem_to_reg)

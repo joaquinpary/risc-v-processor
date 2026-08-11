@@ -78,23 +78,23 @@ module uart_interface #(
     reg [39:0] rx_buffer;
 
     // -----------------------------------------------------------------
-    // Reencuadre de trama por silencio
+    // Frame resync on idle line
     //
-    // Los bytes se agrupan de a 5 contando, sin ninguna marca de inicio de
-    // trama. Si alguna vez se pierde o se cuela un byte, rx_count queda
-    // corrido y TODAS las tramas siguientes se malinterpretan para siempre
-    // (peor aun: un corrimiento de 4 hace que un REQ_REG x2 se lea como el
-    // comando RUN, que deja al debug_unit sordo hasta que la CPU frene).
+    // Bytes are grouped in fives by counting, without any start of frame
+    // marker. If a byte is ever lost or slipped in, rx_count is left shifted
+    // and EVERY following frame is misread forever (worse: a shift of 4 makes
+    // a REQ_REG x2 read as the RUN command, which leaves debug_unit deaf until
+    // the CPU stops).
     //
-    // Solucion: si pasan IDLE_TICKS sin recibir un byte, se descarta la trama
-    // parcial y se vuelve a contar desde cero. Como la PC siempre hace una
-    // pausa entre tramas, cualquier desincronizacion se cura sola.
+    // Fix: if IDLE_TICKS go by without receiving a byte, the partial frame is
+    // dropped and the count restarts from zero. Since the PC always pauses
+    // between frames, any desync heals by itself.
     //
-    // El umbral tiene que ser MAYOR a un tiempo de byte (160 ticks), porque
-    // dentro de una misma trama los bytes llegan pegados y rx_done_tick
-    // aparece recien cada 160 ticks. Usamos 4 tiempos de byte: reencuadra
-    // en ~4 ms a 9600 baudios y deja 4x de margen contra un falso positivo
-    // en medio de una trama valida.
+    // The threshold has to be LARGER than one byte time (160 ticks), because
+    // inside the same frame the bytes arrive back to back and rx_done_tick
+    // only shows up every 160 ticks. We use 4 byte times: it resyncs in ~4 ms
+    // at 9600 baud and leaves 4x of margin against a false positive in the
+    // middle of a valid frame.
     // -----------------------------------------------------------------
     localparam integer IDLE_TICKS = 16 * 10 * 4;   // 4 bytes = 640 ticks
 
@@ -119,7 +119,7 @@ module uart_interface #(
             rx_done_40b_reg <= 0;
 
             if (frame_timeout && rx_count != 0) begin
-                // Silencio largo con una trama a medias: se descarta
+                // Long silence with a half built frame: drop it
                 rx_count <= 0;
             end else if (rx_done_tick) begin
                 rx_buffer <= {rx_buffer[31:0], rx_byte};

@@ -1,9 +1,9 @@
 """
-Capa de transporte: puerto serie + protocolo, expuesto como API asíncrona.
+Transport layer: serial port + protocol, exposed as an async API.
 
-pyserial es bloqueante, así que cada operación de E/S se corre en un thread
-aparte con ``asyncio.to_thread``. Un ``asyncio.Lock`` serializa el acceso para
-que dos comandos concurrentes no intercalen sus tramas de 5 bytes.
+pyserial is blocking, so every I/O operation runs in a separate thread with
+``asyncio.to_thread``. An ``asyncio.Lock`` serializes the access so two
+concurrent commands cannot interleave their 5 byte frames.
 """
 
 from __future__ import annotations
@@ -28,22 +28,22 @@ from .protocol import (
 
 
 class DebugLinkError(Exception):
-    """Error base de la conexión con la placa."""
+    """Base error of the connection with the board."""
 
 
 class PortUnavailable(DebugLinkError):
-    """El puerto no existe, está ocupado o no se puede abrir."""
+    """The port does not exist, is busy or cannot be opened."""
 
 
 class ResponseTimeout(DebugLinkError):
-    """La FPGA no contestó dentro del tiempo esperado."""
+    """The FPGA did not answer within the expected time."""
 
 
 class DebugLink:
     """
-    Conexión con el debug_unit de la FPGA.
+    Connection with the debug_unit of the FPGA.
 
-    Uso:
+    Usage:
 
         link = DebugLink("/dev/ttyUSB0")
         await link.open()
@@ -67,16 +67,16 @@ class DebugLink:
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
-    # Ciclo de vida
+    # Lifecycle
     # ------------------------------------------------------------------
     async def open(self) -> None:
         """
-        Abre el puerto. Lanza PortUnavailable si no se puede.
+        Opens the port. Raises PortUnavailable if it cannot.
 
-        Se pide acceso exclusivo (solo POSIX): si otro proceso ya tiene el
-        puerto abierto, falla acá con un error claro en vez de compartir el
-        stream y robarse bytes mutuamente, que desincroniza el protocolo de
-        forma irrecuperable (la FPGA no tiene reencuadre de tramas).
+        Exclusive access is requested (POSIX only): if another process already
+        has the port open, it fails here with a clear error instead of sharing
+        the stream and stealing bytes from each other, which desyncs the
+        protocol beyond recovery (the FPGA has no frame resync).
         """
         options = dict(
             port=self.port,
@@ -93,19 +93,19 @@ class DebugLink:
                     serial.Serial, exclusive=True, **options
                 )
             except TypeError:
-                # Windows: pyserial no soporta exclusive
+                # Windows: pyserial does not support exclusive
                 self._serial = await asyncio.to_thread(serial.Serial, **options)
         except (serial.SerialException, ValueError, OSError) as exc:
             raise PortUnavailable(
                 f"No se pudo abrir {self.port} a {self.baudrate} baudios: {exc}"
             ) from exc
 
-        # Descarta bytes viejos de una sesión anterior.
+        # Drop stale bytes from a previous session.
         await asyncio.to_thread(self._serial.reset_input_buffer)
         await asyncio.to_thread(self._serial.reset_output_buffer)
 
     async def close(self) -> None:
-        """Cierra el puerto si está abierto (idempotente)."""
+        """Closes the port if it is open (idempotent)."""
         if self._serial is not None and self._serial.is_open:
             await asyncio.to_thread(self._serial.close)
         self._serial = None
@@ -122,7 +122,7 @@ class DebugLink:
         await self.close()
 
     # ------------------------------------------------------------------
-    # Primitivas de transporte
+    # Transport primitives
     # ------------------------------------------------------------------
     def _require_port(self) -> serial.Serial:
         if self._serial is None or not self._serial.is_open:
@@ -156,33 +156,32 @@ class DebugLink:
 
     async def resync(self) -> None:
         """
-        Descarta lo que haya en el buffer de entrada.
+        Drops whatever is in the input buffer.
 
-        Sirve para recuperarse de un timeout: si una respuesta llegó tarde,
-        quedaría desalineada con el próximo pedido.
+        Useful to recover from a timeout: if an answer arrived late, it would
+        be misaligned with the next request.
 
-        OJO: esto solo limpia el lado de la PC. Si la que quedó desalineada es
-        la FPGA, hace falta realign().
+        CAREFUL: this only cleans the PC side. If the one left misaligned is
+        the FPGA, realign() is needed.
         """
         if self._serial is not None and self._serial.is_open:
             await asyncio.to_thread(self._serial.reset_input_buffer)
 
     async def realign(self) -> int | None:
         """
-        Intenta reencuadrar a la FPGA mandando bytes de relleno.
+        Tries to resync the FPGA by sending padding bytes.
 
-        uart_interface.v agrupa los bytes recibidos de a 5 sin ninguna
-        detección de silencio entre tramas, así que si el stream pierde la
-        alineación la FPGA malinterpreta todo para siempre. Como el desfasaje
-        es módulo 5, mandar (5-k) bytes extra completa la trama fantasma y
-        vuelve a alinear; probamos 1 a 4 hasta que conteste. Se manda UN byte
-        por vuelta para que el acumulado recorra 1,2,3,4 y cubra los cuatro
-        desfasajes (mandar `padding` bytes por vuelta daría 1,3,6,10, que mod 5
-        deja sin probar +2 y +4).
+        uart_interface.v groups the received bytes in fives with no idle
+        detection between frames, so if the stream loses alignment the FPGA
+        misreads everything forever. Since the shift is modulo 5, sending
+        (5-k) extra bytes completes the ghost frame and realigns; we try 1 to 4
+        until it answers. ONE byte is sent per round so the running total walks
+        1,2,3,4 and covers the four shifts (sending `padding` bytes per round
+        would give 1,3,6,10, which mod 5 leaves +2 and +4 untested).
 
-        Devuelve cuántos bytes de relleno hicieron falta, o None si no se
-        recuperó (en ese caso la FSM de la FPGA está colgada y hay que
-        reprogramar o resetear por hardware).
+        Returns how many padding bytes were needed, or None if it did not
+        recover (in that case the FPGA FSM is hung and it has to be
+        reprogrammed or reset by hardware).
         """
         for total in range(1, FRAME_SIZE):
             async with self._lock:
@@ -196,7 +195,7 @@ class DebugLink:
         return None
 
     async def _write_frame_raw(self, data: bytes) -> None:
-        """Escribe bytes crudos (para el reencuadre)."""
+        """Writes raw bytes (used by the resync)."""
         port = self._require_port()
         try:
             await asyncio.to_thread(port.write, data)
@@ -205,7 +204,7 @@ class DebugLink:
             raise DebugLinkError(f"Fallo al escribir en {self.port}: {exc}") from exc
 
     # ------------------------------------------------------------------
-    # Comandos de acción (sin respuesta)
+    # Action commands (no answer)
     # ------------------------------------------------------------------
     async def _send_action(self, command: Command, payload: int = 0) -> None:
         assert command in ACTION_COMMANDS
@@ -213,43 +212,44 @@ class DebugLink:
             await self._write_frame(command, payload)
 
     async def step(self) -> None:
-        """Avanza el procesador un ciclo de reloj."""
+        """Advances the processor one clock cycle."""
         await self._send_action(Command.STEP)
 
     async def run(self) -> None:
         """
-        Arranca la ejecución libre.
+        Starts the free run.
 
-        Ojo: mientras está en RUNNING el debug_unit ignora la UART, así que no
-        contesta ningún pedido hasta que cpu_halted lo devuelve a IDLE.
-        Ver wait_until_halted().
+        Careful: while in RUNNING the debug_unit ignores the UART, so it does
+        not answer any request until cpu_halted brings it back to IDLE.
+        See wait_until_halted().
         """
         await self._send_action(Command.RUN)
 
     async def reset(self) -> None:
-        """Reinicia la CPU y el puntero de carga de instrucciones."""
+        """Restarts the CPU and the instruction load pointer."""
         await self._send_action(Command.RESET)
 
     async def load_instruction(self, word: int) -> None:
-        """Escribe una instrucción en memoria (autoincrementa la dirección)."""
+        """Writes one instruction to memory (the address auto-increments)."""
         await self._send_action(Command.LOAD_INSTR, word)
 
     async def load_program(self, words: list[int], progress=None,
                            settle: float = 0.01) -> None:
         """
-        Carga un programa completo en la memoria de instrucciones.
+        Loads a whole program into the instruction memory.
 
-        Secuencia: RESET (que además pone en cero el puntero de escritura de
-        imem) -> una trama LOAD_INSTR por instrucción -> RESET final para dejar
-        el PC en 0 y el pipeline limpio.
+        Sequence: RESET (which also zeroes the imem write pointer) -> one
+        LOAD_INSTR frame per instruction -> a final RESET to leave the PC at 0
+        and the pipeline clean.
 
-        Ojo: el firmware NO recibe la dirección; `debug_unit` autoincrementa
-        `imem_addr_reg` en cada LOAD_INSTR. Por eso el RESET inicial no es
-        opcional: es lo único que reposiciona el puntero.
+        Careful: the firmware does NOT receive the address; `debug_unit`
+        auto-increments `imem_addr_reg` on every LOAD_INSTR. That is why the
+        first RESET is not optional: it is the only thing that rewinds the
+        pointer.
 
-        `progress` es un callable opcional que recibe (enviadas, total).
-        `settle` es la pausa entre tramas: LOAD_INSTR no responde nada, así que
-        sin pausa se le puede ir encima al debug_unit mientras procesa.
+        `progress` is an optional callable that receives (sent, total).
+        `settle` is the pause between frames: LOAD_INSTR answers nothing, so
+        without a pause we can run over the debug_unit while it is working.
         """
         total = len(words)
         await self.reset()
@@ -267,7 +267,7 @@ class DebugLink:
         await asyncio.sleep(0.1)
 
     # ------------------------------------------------------------------
-    # Comandos de lectura (con respuesta)
+    # Read commands (with an answer)
     # ------------------------------------------------------------------
     async def _request(
         self,
@@ -276,7 +276,7 @@ class DebugLink:
         expected_code: int,
         timeout: float | None = None,
     ) -> int:
-        """Manda un pedido y valida que el código de respuesta sea el correcto."""
+        """Sends a request and checks that the response code is the right one."""
         async with self._lock:
             await self._write_frame(command, payload)
             frame = await self._read_frame(timeout)
@@ -291,45 +291,46 @@ class DebugLink:
 
     async def read_register(self, number: int) -> int:
         """
-        Lee un registro del banco.
+        Reads one register from the register file.
 
-        El debug_unit responde usando el propio número de registro como código,
-        así que sirve de acuse: si pedimos x5 y contesta x6, algo se desincronizó.
+        The debug_unit answers using the register number itself as the code, so
+        it works as an acknowledgement: if we ask for x5 and it answers x6,
+        something got out of sync.
         """
         if not 0 <= number < REGISTER_COUNT:
             raise ValueError(f"Registro fuera de rango: {number}")
         return await self._request(Command.REQ_REG, number, expected_code=number)
 
     async def read_pc(self, timeout: float | None = None) -> int:
-        """Lee el Program Counter actual."""
+        """Reads the current Program Counter."""
         return await self._request(
             Command.REQ_PC, 0, expected_code=ResponseKind.PC, timeout=timeout
         )
 
     async def read_memory(self, address: int) -> int:
-        """Lee una palabra de la memoria de datos (puerto B, no molesta a la CPU)."""
+        """Reads a word from the data memory (port B, it does not disturb the CPU)."""
         return await self._request(
             Command.REQ_MEM, address, expected_code=ResponseKind.MEM
         )
 
     async def read_latch(self, latch_id: int) -> int:
-        """Lee un latch del pipeline (ver el case de debug_latch_id en top.v)."""
+        """Reads a pipeline latch (see the debug_latch_id case in top.v)."""
         return await self._request(
             Command.REQ_LATCH, latch_id, expected_code=ResponseKind.LATCH
         )
 
     async def read_all_registers(self) -> AsyncIterator[tuple[int, int]]:
         """
-        Lee los 32 registros. Devuelve un generador de (número, valor).
+        Reads the 32 registers. Returns a generator of (number, value).
 
-        A 9600 baudios cada registro son 10 bytes (5 de ida + 5 de vuelta),
-        ~8.3 ms; los 32 tardan aproximadamente 270 ms.
+        At 9600 baud each register is 10 bytes (5 out + 5 back), ~8.3 ms; the
+        32 of them take around 270 ms.
         """
         for number in range(REGISTER_COUNT):
             yield number, await self.read_register(number)
 
     # ------------------------------------------------------------------
-    # Utilidades
+    # Helpers
     # ------------------------------------------------------------------
     async def wait_until_halted(
         self,
@@ -337,13 +338,13 @@ class DebugLink:
         overall_timeout: float = 30.0,
     ) -> bool:
         """
-        Espera a que la CPU termine la ejecución libre.
+        Waits for the CPU to finish the free run.
 
-        Truco: durante RUNNING el debug_unit no atiende la UART, así que un
-        REQ_PC sin respuesta significa "todavía corriendo" y una respuesta
-        significa "ya volvió a IDLE", o sea que se activó cpu_halted.
+        Trick: during RUNNING the debug_unit does not listen to the UART, so a
+        REQ_PC with no answer means "still running" and an answer means "back
+        in IDLE", that is, cpu_halted went active.
 
-        Devuelve True si frenó, False si se agotó overall_timeout.
+        Returns True if it stopped, False if overall_timeout ran out.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + overall_timeout
@@ -358,5 +359,5 @@ class DebugLink:
 
 
 def available_ports() -> list[str]:
-    """Lista los puertos serie detectados, para sugerirlos si falla la conexión."""
+    """Lists the detected serial ports, to suggest them if the connection fails."""
     return [p.device for p in list_ports.comports()]

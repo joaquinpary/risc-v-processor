@@ -3,14 +3,14 @@
 // =============================================================================
 // alu
 //
-// Unidad aritmetico-logica de 32 bits.
+// 32-bit arithmetic and logic unit.
 //
-// Los codigos 0000/0001/0010/0110 son los originales (AND/OR/ADD/SUB) y se
-// mantienen sin cambios para no romper lo que ya andaba; el resto se agrego
-// para completar las instrucciones que pide el TP.
+// The codes 0000/0001/0010/0110 are the original ones (AND/OR/ADD/SUB) and are
+// kept unchanged so nothing that already worked breaks; the rest were added to
+// complete the instructions required by the TP.
 //
-// Para los desplazamientos la cantidad sale de data_b_i[4:0], que sirve tanto
-// para tipo R (shamt en rs2) como para tipo I (shamt en imm[4:0]).
+// For the shifts the amount comes from data_b_i[4:0], which works for both
+// R-type (shamt in rs2) and I-type (shamt in imm[4:0]).
 // =============================================================================
 
 module alu (
@@ -45,8 +45,8 @@ module alu (
             ALU_SLL:  result_aux = data_a_i << shamt;
             ALU_SRL:  result_aux = data_a_i >> shamt;
             ALU_SUB:  result_aux = data_a_i - data_b_i;
-            // SLT compara con signo, SLTU sin signo: 1 o 0 en el bit menos
-            // significativo, el resto en cero.
+            // SLT compares signed, SLTU unsigned: 1 or 0 in the least
+            // significant bit, the rest zero.
             ALU_SLT:  result_aux = ($signed(data_a_i) < $signed(data_b_i))
                                    ? 32'd1 : 32'd0;
             ALU_SRA:  result_aux = $signed(data_a_i) >>> shamt;
@@ -57,7 +57,7 @@ module alu (
 
     assign result_o = result_aux;
 
-    // zero_o lo usan los branches: para beq/bne la ALU resta, asi que
+    // zero_o is used by the branches: for beq/bne the ALU subtracts, so
     // zero_o = (rs1 == rs2).
     assign zero_o = (result_aux == 32'b0);
 

@@ -26,12 +26,11 @@ module execute(
     
     wire    [3:0]   alu_ctrl;
     
-    // Destino del salto.
+    // Branch target.
     //
-    // imm_gen YA entrega el offset en bytes: para los formatos B y J el
-    // inmediato termina en 1'b0, o sea que el x2 ya esta hecho. Volver a
-    // desplazarlo (como se hacia antes) mandaba todos los saltos al doble de
-    // la distancia pedida.
+    // imm_gen ALREADY gives the offset in bytes: for the B and J formats the
+    // immediate ends in 1'b0, so the x2 is already done. Shifting it again
+    // (as it did before) sent every branch to twice the requested distance.
     assign pc_branch_o = pc_i + imm_gen_i;
     
     // MUX

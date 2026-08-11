@@ -1,4 +1,4 @@
-"""Herramientas de depuración por UART para el procesador RISC-V en FPGA."""
+"""UART debug tools for the RISC-V processor running on the FPGA."""
 
 from .link import DebugLink, DebugLinkError, PortUnavailable, ResponseTimeout
 from .protocol import Command, Frame, ProtocolError, ResponseKind

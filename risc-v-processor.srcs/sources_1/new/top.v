@@ -93,9 +93,9 @@ module top #(
     wire        pc_write, if_id_write, control_mux;
     wire        stall = ~pc_write;
 
-    // Registros fuente efectivos: instruction_decode los pone en x0 cuando el
-    // campo no es realmente un registro (lui, jal, y el rs2 de los tipo I).
-    // Usar los mismos aca evita forwarding espurio y stalls al pedo.
+    // Effective source registers: instruction_decode sets them to x0 when the
+    // field is not really a register (lui, jal, and the rs2 of the I-types).
+    // Using the same ones here avoids spurious forwarding and useless stalls.
     wire [4:0]  rs1_addr_id;
     wire [4:0]  rs2_addr_id;
 
@@ -123,48 +123,49 @@ module top #(
     );
 
     // =========================================================================
-    // CONTROL HAZARDS - resolucion del salto en EX (prediccion "no salta")
+    // CONTROL HAZARDS - branch resolved in EX (predict not taken)
     //
-    // Se resuelve en EX y no en MEM: al confirmarse el salto se vacian las
-    // instrucciones que ya entraron por el camino equivocado. Resolverlo en MEM
-    // costaria un ciclo mas.
+    // It is resolved in EX and not in MEM: once the branch is confirmed, the
+    // instructions that already entered through the wrong path are flushed.
+    // Resolving it in MEM would cost one more cycle.
     // =========================================================================
     wire        branch_ex = control_bus_ex[6];      // Branch
     wire        jump_ex   = control_bus_ex[3];      // Jump (jal / jalr)
-    wire        alu_src_ex = control_bus_ex[7];     // 1 solo en jalr, no en jal
+    wire        alu_src_ex = control_bus_ex[7];     // 1 only in jalr, not in jal
 
-    // La ALU resta en los branches (ALUOp=01), asi que zero_o_ex = (rs1 == rs2);
-    // funct3 elige la polaridad.
+    // The ALU subtracts on branches (ALUOp=01), so zero_o_ex = (rs1 == rs2);
+    // funct3 picks the polarity.
     reg         branch_cond_ok;
     always @(*) begin
         case (funct3_ex)
-            3'b000:  branch_cond_ok =  zero_o_ex;   // beq: salta si son iguales
-            3'b001:  branch_cond_ok = ~zero_o_ex;   // bne: salta si son distintos
+            3'b000:  branch_cond_ok =  zero_o_ex;   // beq: taken if equal
+            3'b001:  branch_cond_ok = ~zero_o_ex;   // bne: taken if different
             default: branch_cond_ok =  zero_o_ex;
         endcase
     end
 
     wire        branch_taken_ex = (branch_ex & branch_cond_ok) | jump_ex;
 
-    // jalr salta a rs1+imm, que es justamente el resultado de la ALU;
-    // beq/bne/jal usan pc+imm.
+    // jalr jumps to rs1+imm, which is exactly the ALU result;
+    // beq/bne/jal use pc+imm.
     wire        jalr_ex = jump_ex & alu_src_ex;
     wire [31:0] branch_target_ex = jalr_ex ? result_o_ex : pc_branch_o_ex;
 
-    // Senal global de vaciado
+    // Global flush signal
     wire        flush = branch_taken_ex;
 
-    // La BRAM de instrucciones agrega una etapa que el modelo clasico de 5
-    // etapas no tiene: cuando el salto se resuelve en EX hay TRES instrucciones
-    // del camino equivocado en vuelo, no dos.
+    // The instruction BRAM adds a stage the classic 5-stage model does not
+    // have: when the branch is resolved in EX there are THREE wrong path
+    // instructions in flight, not two.
     //
-    //   1) la que esta en ID,
-    //   2) la que ya salio de la BRAM y espera en doutb,
-    //   3) la que se esta buscando ahora mismo, que aparecera en doutb al ciclo
-    //      siguiente (el redireccionamiento del PC llega tarde para evitarla).
+    //   1) the one in ID,
+    //   2) the one that already came out of the BRAM and waits in doutb,
+    //   3) the one being fetched right now, which will show up in doutb on the
+    //      next cycle (the PC redirection arrives too late to stop it).
     //
-    // Vaciar IF/ID un solo ciclo mata (1) y (2) pero deja pasar (3). Por eso el
-    // vaciado del frente se extiende un ciclo mas. Penalidad real: 3 ciclos.
+    // Flushing IF/ID for a single cycle kills (1) and (2) but lets (3) through.
+    // That is why the front flush is extended one more cycle. Real penalty:
+    // 3 cycles. See docs/pipeline-depth.md.
     reg         flush_d1;
 
     always @(posedge clk) begin
@@ -187,8 +188,8 @@ module top #(
     reg     [31:0]  pc_id;
     reg     [31:0]  pc_plus_4_id;
     reg     [31:0]  instruction_id;
-    // Distingue una instruccion real de una burbuja de flush: sin esto, el
-    // detector de halt confundiria cada salto tomado con el fin del programa.
+    // Tells a real instruction apart from a flush bubble: without this, the
+    // halt detector would take every taken branch for the end of the program.
     reg             if_id_valid;
 
     // ID stage wires (outputs of instruction_decode)
@@ -249,8 +250,8 @@ module top #(
     // (read_data has no register here: the data BRAM output register is the
     //  MEM/WB boundary for it, see the write_back instance below)
     reg     [2:0]   control_wb;
-    // funct3 viaja hasta WB porque la extraccion del byte/media palabra de las
-    // cargas se hace alli: el dato de la BRAM recien llega en ese ciclo.
+    // funct3 travels all the way to WB because the byte/half word extraction of
+    // the loads is done there: the BRAM data only arrives on that cycle.
     reg     [2:0]   funct3_wb;
     reg     [31:0]  result_wb;
     reg     [31:0]  pc_plus_4_wb;
@@ -260,7 +261,7 @@ module top #(
     instruction_fetch u_if (
         .clk            (clk),
         .reset          (pipeline_reset),
-        // El salto tiene prioridad sobre el freno del stall
+        // The branch has priority over the stall freeze
         .pc_write_en_i  (cpu_enable & (pc_write | branch_taken_ex)),
         .pc_src_i       (branch_taken_ex),
         .pc_branch_i    (branch_target_ex),
@@ -284,7 +285,7 @@ module top #(
             instr_skid_valid <= 1'b0;
         end else if (cpu_enable) begin
             if (flush_if) begin
-                // La palabra guardada es del camino no tomado: se descarta
+                // The saved word belongs to the wrong path: drop it
                 instr_skid_valid <= 1'b0;
             end else if (stall) begin
                 if (!instr_skid_valid) begin
@@ -343,9 +344,9 @@ module top #(
     end
 
     // ===== IF/ID latch =====
-    // El flush tiene prioridad sobre el freno del stall (if_id_write). En la
-    // practica no pueden coexistir -una instruccion en EX no puede ser load y
-    // salto a la vez- pero el orden correcto lo deja a prueba de cambios.
+    // The flush has priority over the stall freeze (if_id_write). In practice
+    // they cannot happen together -an instruction in EX cannot be a load and a
+    // branch at once- but the right order keeps it safe against future changes.
     always @(posedge clk) begin
         if (pipeline_reset) begin
             pc_id           <= 32'b0;
@@ -354,7 +355,7 @@ module top #(
             if_id_valid     <= 1'b0;
         end else if (cpu_enable) begin
             if (flush_if) begin
-                // Burbuja: la instruccion venia del camino no tomado
+                // Bubble: the instruction came from the wrong path
                 pc_id           <= 32'b0;
                 pc_plus_4_id    <= 32'b0;
                 instruction_id  <= 32'b0;
@@ -412,7 +413,7 @@ module top #(
             pc_ex           <= pc_o_id;
             pc_plus_4_ex    <= pc_plus_4_o_id;
             pc_branch_ex    <= pc_branch_o_ex;
-            // Burbuja por stall de load-use (control_mux) O por salto tomado
+            // Bubble from a load-use stall (control_mux) OR from a taken branch
             control_bus_ex  <= (control_mux | flush_if) ? 10'b0 : control_bus_o_id;
             read_data_1_ex  <= read_data_1_o_id;
             read_data_2_ex  <= read_data_2_o_id;
@@ -491,8 +492,8 @@ module top #(
         .clk           (clk),
         .reset         (pipeline_reset),
         .enable_i      (cpu_enable),
-        // Indice de palabra, igual que el puerto del procesador: la direccion
-        // que manda el dashboard es de byte.
+        // Word index, same as the processor port: the address the dashboard
+        // sends is a byte address.
         .debug_addr_i  (debug_mem_addr[11:2]),
         .control_i     (control_mem),
         .pc_plus_4_i   (pc_plus_4_mem),
@@ -547,8 +548,9 @@ module top #(
     );
 
     // Halt detection
-    // if_id_valid excluye las burbujas de flush, que tambien tienen
-    // instruction_id == 0 y si no frenarian el procesador en cada salto tomado.
+    // if_id_valid excludes the flush bubbles, which also have
+    // instruction_id == 0 and would otherwise stop the processor on every
+    // taken branch.
     assign cpu_halted = (instruction_id == 32'b0) && if_id_valid
                                                   && (pc_if > 32'h00000010);
 

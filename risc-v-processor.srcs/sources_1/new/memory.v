@@ -27,25 +27,25 @@ module memory(
     );
     
     // -------------------------------------------------------------------
-    // Direccionamiento
+    // Addressing
     //
-    // La BRAM tiene 1024 palabras de 32 bits y addra es un indice de PALABRA,
-    // pero result_i es una direccion de BYTE. Hay que separarla: los bits
-    // [11:2] eligen la palabra y los [1:0] el byte dentro de ella.
+    // The BRAM has 1024 words of 32 bits and addra is a WORD index, but
+    // result_i is a BYTE address. It has to be split: bits [11:2] pick the
+    // word and bits [1:0] the byte inside it.
     //
-    // (Antes se usaba result_i[9:0] directo como indice de palabra. Para
-    // accesos de palabra completa era consistente consigo mismo, pero saltaba
-    // de a 4 posiciones y hacia imposible direccionar un byte suelto.)
+    // (Before, result_i[9:0] was used directly as a word index. For full word
+    // accesses it was consistent with itself, but it jumped 4 positions at a
+    // time and made it impossible to address a single byte.)
     // -------------------------------------------------------------------
     wire    [9:0]   mem_addr   = result_i[11:2];
     wire    [1:0]   byte_off   = result_i[1:0];
 
     wire            mem_write = control_i[4];
     wire            mem_read = control_i[5];
-    // control_i[6] (Branch), control_i[3] (Jump), zero_i y pc_branch_i ya no se
-    // usan aca: la decision del salto se toma en EX.
+    // control_i[6] (Branch), control_i[3] (Jump), zero_i and pc_branch_i are no
+    // longer used here: the branch decision is taken in EX.
 
-    reg     [3:0]   size_mask;      // que bytes toca la instruccion, sin desplazar
+    reg     [3:0]   size_mask;      // which bytes the instruction touches, unshifted
     reg     [3:0]   byte_write_en;
     reg     [31:0]  write_data;
 
@@ -57,20 +57,20 @@ module memory(
             default: size_mask = 4'b1111;
         endcase
 
-        // La mascara y el dato se corren al carril que indica la direccion:
-        // sin esto un sb siempre escribia el byte 0 sin importar el offset.
+        // The mask and the data are shifted to the lane the address points to:
+        // without this an sb always wrote byte 0 no matter the offset.
         byte_write_en = mem_write ? (size_mask << byte_off) : 4'b0000;
         write_data    = data2_i << (8 * byte_off);
     end
     
     // PCSrc
     //
-    // La resolucion de saltos se movio a la etapa EX (ver top.v): alli se
-    // decide con funct3, lo que permite soportar bne ademas de beq y baja la
-    // penalidad de 4 ciclos a 3. (Son 3 y no 2 porque la etapa IF ocupa dos
-    // ciclos por la latencia de la BRAM de instrucciones: ver
-    // docs/pipeline-depth.md.) Dejar esta salida activa provocaria un segundo
-    // redireccionamiento del PC, asi que se ata a cero.
+    // Branch resolution moved to the EX stage (see top.v): there it is decided
+    // with funct3, which allows supporting bne besides beq and lowers the
+    // penalty from 4 cycles to 3. (It is 3 and not 2 because the IF stage
+    // takes two cycles due to the instruction BRAM latency: see
+    // docs/pipeline-depth.md.) Leaving this output active would cause a second
+    // PC redirection, so it is tied to zero.
     assign pc_src_o = 1'b0;
     
     // Data Memory

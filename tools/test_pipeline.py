@@ -1,17 +1,17 @@
 """
-Test de regresion del pipeline sin Vivado.
+Pipeline regression test without Vivado.
 
-Modela ciclo a ciclo el datapath (replicando el RTL: latencia de las BRAM,
-forwarding, stall de load-use, flush de saltos, accesos sub-palabra) y compara
-el resultado contra un simulador secuencial RV32I de referencia, tanto con
-programas dirigidos como con programas aleatorios.
+Models the datapath cycle by cycle (replicating the RTL: BRAM latency,
+forwarding, load-use stall, branch flush, sub-word accesses) and compares the
+result against a reference sequential RV32I simulator, with both directed and
+random programs.
 
-Uso:  python test_pipeline.py
+Usage:  python test_pipeline.py
 """
 M = 0xFFFFFFFF
 def s32(v): return v-(1<<32) if v & 0x80000000 else v
 
-# ---------------- referencia: simulador secuencial ----------------
+# ---------------- reference: sequential simulator ----------------
 def reference(prog, max_steps=2000, mem_words=1024):
     regs=[0]*32; mem=[0]*mem_words; pc=0; steps=0
     while steps<max_steps:
@@ -65,7 +65,7 @@ def reference(prog, max_steps=2000, mem_words=1024):
         pc=nxt
     return regs, mem, pc
 
-# ================= modelo del pipeline (replica el RTL) =================
+# ================= pipeline model (replicates the RTL) =================
 def ctrl(op):
     # ALUOp[9:8] ALUSrc[7] Branch[6] MemRead[5] MemWrite[4] Jump[3] RegWrite[2] MemtoReg[1:0]
     return {0x33:0b10_0_0_0_0_0_1_00, 0x13:0b11_1_0_0_0_0_1_00,
@@ -111,7 +111,7 @@ class Pipe:
         self.halted=False
 
     def step(self):
-        # ---- WB (usa douta de la BRAM, que es el latch MEM/WB del dato) ----
+        # ---- WB (uses douta of the BRAM, which is the MEM/WB latch of the data) ----
         w=self.memwb; off=w['res']&3; al=(self.douta>>(8*off))&M
         ld={0:((al&0xFF)|(0xFFFFFF00 if al&0x80 else 0))&M,
             1:((al&0xFFFF)|(0xFFFF0000 if al&0x8000 else 0))&M,
@@ -119,7 +119,7 @@ class Pipe:
         m2r=w['ctrl']&3
         wb_data={0:w['res'],1:ld,2:w['pc4']}.get(m2r,0)
         wb_we=(w['ctrl']>>2)&1
-        # regfile escribe en negedge -> visible a ID en el mismo ciclo
+        # regfile writes on negedge -> visible to ID in the same cycle
         if wb_we and w['rd']: self.regs[w['rd']]=wb_data&M
 
         # ---- ID ----
@@ -164,7 +164,7 @@ class Pipe:
         flush = taken
         flush_if = flush or bool(self.flush_d1)
 
-        # ---- MEM (BRAM datos, latencia 1, WRITE_FIRST) ----
+        # ---- MEM (data BRAM, latency 1, WRITE_FIRST) ----
         mem_w=(xm['ctrl']>>4)&1; mem_r=(xm['ctrl']>>5)&1
         widx=(xm['res']>>2)&0x3FF; boff=xm['res']&3
         size={0:0xF&0b0001,1:0b0011,2:0b1111}.get(xm['f3'],0b1111)
@@ -185,7 +185,7 @@ class Pipe:
         if self.ifid['ins']==0 and self.ifid['valid'] and self.pc_fetched>0x10:
             self.halted=True
 
-        # ================= actualizacion de estado =================
+        # ================= state update =================
         new_memwb={'ctrl':xm['ctrl']&7,'f3':xm['f3'],'res':xm['res'],
                    'pc4':xm['pc4'],'rd':xm['rd']}
         new_exmem={'pc4':e['pc4'],'ctrl':e['ctrl']&0x7F,'res':res,'d2':b_in,

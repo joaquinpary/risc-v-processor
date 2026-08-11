@@ -31,22 +31,22 @@ module instruction_decode(
     wire       bit30    = instruction_i[30];
 
     // -------------------------------------------------------------------
-    // Registros fuente efectivos
+    // Effective source registers
     //
-    // No todos los formatos usan esos campos como registro: en lui y jal los
-    // bits 19:15 y 24:20 son parte del inmediato, y en los formatos tipo I el
-    // campo rs2 tambien lo es. Si se los tratara como registros pasarian dos
-    // cosas malas:
-    //   - lui leeria un registro al azar y lo sumaria a su inmediato,
-    //   - la unidad de forwarding podria adelantar un valor sobre esos bits.
-    // Por eso se fuerzan a x0 cuando no son un registro de verdad, y se
-    // exportan para que top.v use exactamente los mismos en el forwarding y en
-    // la deteccion de riesgos.
+    // Not every format uses these fields as a register: in lui and jal the
+    // bits 19:15 and 24:20 are part of the immediate, and in the I-type
+    // formats the rs2 field is too. Treating them as registers would cause
+    // two bad things:
+    //   - lui would read a random register and add it to its immediate,
+    //   - the forwarding unit could forward a value onto those bits.
+    // That is why they are forced to x0 when they are not a real register, and
+    // exported so top.v uses exactly the same ones for forwarding and for
+    // hazard detection.
     // -------------------------------------------------------------------
     wire uses_rs1 = (opcode != 7'b0110111)   // lui
                  && (opcode != 7'b1101111);  // jal
 
-    wire uses_rs2 = (opcode == 7'b0110011)   // tipo R
+    wire uses_rs2 = (opcode == 7'b0110011)   // R-type
                  || (opcode == 7'b0100011)   // stores
                  || (opcode == 7'b1100011);  // branches
 

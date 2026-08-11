@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-uart_doctor — traza y diagnostica el enlace UART con la FPGA.
+uart_doctor - traces and diagnoses the UART link with the FPGA.
 
-Tres modos:
+Three modes:
 
-    # 1. Diagnostico controlado: aisla QUE comando rompe el enlace
+    # 1. Controlled diagnosis: isolates WHICH command breaks the link
     python uart_doctor.py diagnose --port /dev/ttyUSB1
 
-    # 2. Corre dashboard.py con todos los bytes trazados
+    # 2. Runs dashboard.py with every byte traced
     python uart_doctor.py trace-dashboard --port /dev/ttyUSB1
 
-    # 3. Corre el dashboard TUI (riscv_debug) con todos los bytes trazados
+    # 3. Runs the TUI dashboard (riscv_debug) with every byte traced
     python uart_doctor.py trace-tui --port /dev/ttyUSB1
 
-Todo queda en un archivo de log con marcas de tiempo (--log, por defecto
-uart_doctor.log) además de salir por consola.
+Everything is kept in a log file with timestamps (--log, uart_doctor.log by
+default) besides going to the console.
 
-La traza funciona parcheando serial.Serial, así que registra CUALQUIER script
-que use pyserial sin tener que modificarlo.
+The trace works by patching serial.Serial, so it records ANY script that uses
+pyserial without having to modify it.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-# Permite importar riscv_debug estando parado en cualquier lado.
+# Allows importing riscv_debug from any working directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import serial  # noqa: E402
@@ -47,7 +47,7 @@ from riscv_debug.protocol import (  # noqa: E402
 
 
 class Log:
-    """Escribe a consola y a archivo con marca de tiempo relativa."""
+    """Writes to console and to file with a relative timestamp."""
 
     def __init__(self, path: Path | None):
         self.t0 = time.monotonic()
@@ -71,12 +71,12 @@ class Log:
 
 
 # =====================================================================
-# Decodificación legible de tramas
+# Readable frame decoding
 # =====================================================================
 
 
 def describe_tx(frame: bytes) -> str:
-    """Describe una trama que va de la PC a la FPGA."""
+    """Describes a frame going from the PC to the FPGA."""
     cmd, payload = frame[0], int.from_bytes(frame[1:5], "big")
     try:
         name = Command(cmd).name
@@ -96,7 +96,7 @@ def describe_tx(frame: bytes) -> str:
 
 
 def describe_rx(frame: bytes) -> str:
-    """Describe una trama que viene de la FPGA."""
+    """Describes a frame coming from the FPGA."""
     code, data = frame[0], int.from_bytes(frame[1:5], "big")
     if code <= MAX_REGISTER_CODE:
         return f"REG x{code} ({ABI_NAMES[code]}) = 0x{data:08X} ({data})"
@@ -112,18 +112,18 @@ def hexdump(data: bytes) -> str:
 
 
 # =====================================================================
-# Ensamblador de tramas: detecta desalineación
+# Frame assembler: detects misalignment
 # =====================================================================
 
 
 class FrameAssembler:
     """
-    Reconstruye tramas de 5 bytes en un sentido y lleva la cuenta total.
+    Rebuilds 5 byte frames in one direction and keeps the running total.
 
-    El punto clave: la FPGA agrupa los bytes recibidos de a 5 sin ningún
-    reencuadre (uart_interface.v cuenta rx_count módulo 5). Si el total de
-    bytes que mandamos deja de ser múltiplo de 5 en un límite de trama,
-    la FPGA queda desalineada para siempre.
+    The key point: the FPGA groups the received bytes in fives with no resync
+    (uart_interface.v counts rx_count modulo 5). If the total number of bytes
+    we send stops being a multiple of 5 at a frame boundary, the FPGA stays
+    misaligned forever.
     """
 
     def __init__(self, direction: str, log: Log, describe):
@@ -169,7 +169,7 @@ class FrameAssembler:
 
 
 # =====================================================================
-# serial.Serial instrumentado
+# Instrumented serial.Serial
 # =====================================================================
 
 _RealSerial = serial.Serial
@@ -179,16 +179,17 @@ _tracers: list["TracedSerial"] = []
 def make_traced_serial(log: Log, force_port: str | None = None,
                        force_baud: int | None = None):
     """
-    Devuelve una subclase de serial.Serial que registra todo el tráfico.
+    Returns a serial.Serial subclass that logs all the traffic.
 
-    force_port/force_baud pisan lo que pida el script trazado: dashboard.py
-    tiene el puerto hardcodeado, así que sin esto --port no tendría efecto.
+    force_port/force_baud override whatever the traced script asks for:
+    dashboard.py has the port hardcoded, so without this --port would have no
+    effect.
     """
 
     class TracedSerial(_RealSerial):
         def __init__(self, *args, **kwargs):
             if force_port is not None:
-                if args:  # port como primer posicional
+                if args:  # port as the first positional argument
                     args = (force_port,) + args[1:]
                 kwargs["port"] = force_port
             if force_baud is not None:
@@ -246,7 +247,7 @@ def make_traced_serial(log: Log, force_port: str | None = None,
 
 def install_tracer(log: Log, port: str | None = None,
                    baud: int | None = None) -> None:
-    """Parchea serial.Serial para que cualquier script quede instrumentado."""
+    """Patches serial.Serial so any script becomes instrumented."""
     serial.Serial = make_traced_serial(log, port, baud)
     log(f"Tracer instalado sobre serial.Serial (forzando puerto {port})")
 
@@ -264,19 +265,19 @@ def summarize_tracers(log: Log) -> None:
 
 
 # =====================================================================
-# Modo 1: diagnóstico controlado
+# Mode 1: controlled diagnosis
 # =====================================================================
 
 
 class Probe:
-    """Envía comandos crudos y mide la respuesta, sin ninguna abstracción."""
+    """Sends raw commands and measures the answer, with no abstraction."""
 
     def __init__(self, port: str, baud: int, timeout: float, log: Log):
         self.log = log
         self.timeout = timeout
         try:
-            # exclusive=True hace que abrir el puerto dos veces falle en vez de
-            # corromper el stream en silencio (solo POSIX).
+            # exclusive=True makes opening the port twice fail instead of
+            # silently corrupting the stream (POSIX only).
             self.ser = _RealSerial(
                 port=port, baudrate=baud, timeout=timeout, exclusive=True
             )
@@ -291,7 +292,7 @@ class Probe:
         self.tx_total = 0
 
     def drain(self, label: str = "") -> bytes:
-        """Vacía el buffer de entrada y reporta lo que había (bytes huérfanos)."""
+        """Empties the input buffer and reports what was there (orphan bytes)."""
         time.sleep(0.2)
         pending = self.ser.in_waiting
         if not pending:
@@ -310,7 +311,7 @@ class Probe:
         self.log(f"  TX {hexdump(frame)}  | {describe_tx(frame)}")
 
     def expect(self, timeout: float | None = None) -> bytes | None:
-        """Lee una trama y la reporta. Devuelve None si hubo timeout."""
+        """Reads a frame and reports it. Returns None on timeout."""
         self.ser.timeout = timeout or self.timeout
         t0 = time.monotonic()
         data = self.ser.read(FRAME_SIZE)
@@ -327,21 +328,23 @@ class Probe:
         return None
 
     def ping(self, timeout: float | None = None) -> bool:
-        """REQ_PC como prueba de vida."""
+        """REQ_PC as a liveness check."""
         self.send(Command.REQ_PC)
         return self.expect(timeout) is not None
 
     def try_realign(self) -> int | None:
         """
-        Intenta reencuadrar a la FPGA mandando bytes de relleno.
+        Tries to resync the FPGA by sending padding bytes.
 
-        Como agrupa de a 5 sin reencuadre, si quedó corrida k bytes, mandar
-        (5-k) bytes extra completa la trama fantasma y vuelve a alinear.
-        Devuelve cuántos bytes hicieron falta en total, o None si no se recuperó.
+        Since it groups in fives with no resync, if it was left shifted by k
+        bytes, sending (5-k) extra bytes completes the ghost frame and
+        realigns. Returns how many bytes were needed in total, or None if it
+        did not recover.
 
-        Se manda UN byte por vuelta, así el relleno acumulado recorre 1,2,3,4 y
-        cubre los cuatro desfasajes posibles. (Mandar `padding` bytes por vuelta
-        acumularía 1,3,6,10 == 1,3,1,0 mod 5 y nunca probaría +2 ni +4.)
+        ONE byte is sent per round, so the accumulated padding walks 1,2,3,4
+        and covers the four possible shifts. (Sending `padding` bytes per round
+        would accumulate 1,3,6,10 == 1,3,1,0 mod 5 and would never test +2
+        or +4.)
         """
         self.log("  Probando reencuadre con bytes de relleno...")
         for total in range(1, FRAME_SIZE):
@@ -362,11 +365,11 @@ class Probe:
 
 def diagnose(port: str, baud: int, timeout: float, log: Log) -> int:
     """
-    Secuencia controlada que aisla qué comando rompe el enlace.
+    Controlled sequence that isolates which command breaks the link.
 
-    Después de cada acción hace un REQ_PC de prueba de vida; el primer fallo
-    identifica al culpable, y ahí se intenta el reencuadre para distinguir
-    entre "FPGA desalineada" y "FSM colgada".
+    After every action it does a REQ_PC liveness check; the first failure names
+    the culprit, and there the resync is attempted to tell apart "misaligned
+    FPGA" from "hung FSM".
     """
     probe = Probe(port, baud, timeout, log)
     verdict = 0
@@ -489,12 +492,12 @@ def diagnose(port: str, baud: int, timeout: float, log: Log) -> int:
 
 
 # =====================================================================
-# Modos 2 y 3: correr otro script bajo traza
+# Modes 2 and 3: run another script under trace
 # =====================================================================
 
 
 def trace_dashboard(port: str, baud: int, log: Log) -> int:
-    """Corre dashboard.py (el de la raíz del repo) con la traza puesta."""
+    """Runs dashboard.py (the one at the repo root) with the trace on."""
     script = Path(__file__).resolve().parent.parent / "dashboard.py"
     if not script.exists():
         log(f"No encuentro {script}")
@@ -516,7 +519,7 @@ def trace_dashboard(port: str, baud: int, log: Log) -> int:
 
 
 def trace_tui(port: str, baud: int, log: Log) -> int:
-    """Corre el dashboard TUI (riscv_debug) con la traza puesta."""
+    """Runs the TUI dashboard (riscv_debug) with the trace on."""
     install_tracer(log, port, baud)
     log.rule("Ejecutando riscv_debug")
     from riscv_debug.__main__ import main as tui_main

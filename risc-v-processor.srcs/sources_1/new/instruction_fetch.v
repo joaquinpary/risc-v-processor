@@ -1,26 +1,27 @@
 `timescale 1ns / 1ps
 
 // =====================================================================
-// Etapa IF - ocupa DOS ciclos de reloj
+// IF stage - it takes TWO clock cycles
 //
-// instruction_memory es una block RAM con salida registrada, asi que su
-// latencia de lectura es 1: la palabra sale por doutb un ciclo despues de
-// presentar la direccion por addrb. La busqueda queda partida en dos:
+// instruction_memory is a block RAM with a registered output, so its read
+// latency is 1: the word comes out of doutb one cycle after the address is
+// presented on addrb. That splits the fetch in two:
 //
-//   IF1: pc_reg presenta la direccion a la BRAM
-//   IF2: la instruccion esta disponible en doutb (= instruction_o)
+//   IF1: pc_reg presents the address to the BRAM
+//   IF2: the instruction is available on doutb (= instruction_o)
 //
-// y recien en el ciclo siguiente el latch IF/ID de top.v la captura. En
-// niveles de registro el pipeline tiene seis, no cinco. Las etapas logicas
-// siguen siendo las cinco clasicas.
+// and only on the next cycle does the IF/ID latch in top.v capture it. In
+// register levels the pipeline has six, not five. The logical stages are
+// still the classic five.
 //
-// Consecuencias (analisis completo en docs/pipeline-depth.md):
-//   - la penalidad de un salto tomado es de 3 ciclos, no 2
-//   - hace falta pc_fetched para alinear el PC con su instruccion (ver abajo)
-//   - hace falta el skid buffer de top.v, porque el puerto B se genero sin
-//     pin ENB y su registro de salida no se puede congelar en un stall
+// Consequences (full analysis in docs/pipeline-depth.md):
+//   - the penalty of a taken branch is 3 cycles, not 2
+//   - pc_fetched is needed to align the PC with its instruction (see below)
+//   - the skid buffer in top.v is needed, because port B was generated
+//     without an ENB pin and its output register cannot be frozen on a stall
 //
-// La productividad NO se ve afectada: en regimen sale una instruccion por ciclo.
+// Throughput is NOT affected: in steady state one instruction comes out per
+// cycle.
 // =====================================================================
 
 module instruction_fetch(
@@ -57,18 +58,18 @@ module instruction_fetch(
     end
 
     // -------------------------------------------------------------------
-    // PC alineado con su instruccion
+    // PC aligned with its instruction
     //
-    // La BRAM de instrucciones tiene latencia de lectura 1: la palabra sale un
-    // ciclo despues de presentar la direccion, y para entonces pc_reg ya
-    // avanzo. Sin corregirlo, el latch IF/ID guarda la instruccion de la
-    // direccion P junto con el PC P+4, y como el destino de un salto se calcula
-    // pc + imm, TODOS los saltos quedaban corridos 4 bytes (y el valor de
-    // enlace de jal tambien).
+    // The instruction BRAM has a read latency of 1: the word comes out one
+    // cycle after the address is presented, and by then pc_reg has already
+    // moved on. Without fixing this, the IF/ID latch stores the instruction of
+    // address P together with the PC P+4, and since a branch target is
+    // computed as pc + imm, EVERY branch was off by 4 bytes (and so was the
+    // link value of jal).
     //
-    // pc_fetched va un ciclo atras de pc_reg, o sea que viaja junto a la
-    // instruccion que sale por doutb. Comparte el enable con pc_reg, asi que
-    // durante un stall los dos se congelan juntos y la alineacion se mantiene.
+    // pc_fetched runs one cycle behind pc_reg, so it travels together with the
+    // instruction coming out of doutb. It shares the enable with pc_reg, so
+    // during a stall both freeze together and the alignment is kept.
     // -------------------------------------------------------------------
     reg [31:0] pc_fetched;
 
@@ -88,12 +89,12 @@ module instruction_fetch(
         .ena    (ins_write_en_i),
         .wea    (1'b1),
         
-        .addrb  (pc_reg[11:2]),         // direccion en curso
+        .addrb  (pc_reg[11:2]),         // address being fetched
         .clkb   (clk),
         .doutb  (instruction_o)
     );
 
-    // pc_o y pc_plus_4_o acompanan a instruction_o, no a la busqueda en curso
+    // pc_o and pc_plus_4_o go with instruction_o, not with the fetch in flight
     assign pc_o = pc_fetched;
     assign pc_plus_4_o = pc_fetched + 32'd4;
     

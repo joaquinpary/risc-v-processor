@@ -2,34 +2,34 @@
 
 module tb_uart_interface;
 
-    // Parámetros
+    // Parameters
     localparam BAUD_RATE = 9600;
-    localparam FREQ = 10000000;      // Frecuencia de 10 MHz
+    localparam FREQ = 10000000;      // 10 MHz frequency
     localparam DATA_BIT = 8;
     localparam STOP_BIT_TICK = 16;
 
-    // Señales de reloj y reset
+    // Clock and reset signals
     reg clk;
     reg reset;
-    
-    // Pines UART físicos simulados
+
+    // Simulated physical UART pins
     reg  rx_pin;
     wire tx_pin;
-    
-    // Interfaz ALU/Memoria (Lado RX)
+
+    // ALU/Memory interface (RX side)
     wire [39:0] rx_data_40b;
     wire        rx_done_40b;
-    
-    // Interfaz ALU/Memoria (Lado TX)
+
+    // ALU/Memory interface (TX side)
     reg  [39:0] tx_data_40b;
     reg         tx_start_40b;
     wire        tx_busy;
 
-    // Reloj (10MHz -> Periodo de 100ns -> Toggle cada 50ns)
+    // Clock (10MHz -> 100ns period -> toggle every 50ns)
     always #50 clk = ~clk;
 
     // ==========================================
-    // 1. Instancia del DUT (Device Under Test)
+    // 1. DUT instance (Device Under Test)
     // ==========================================
     uart_interface #(
         .BAUD_RATE(BAUD_RATE),
@@ -49,13 +49,13 @@ module tb_uart_interface;
     );
 
     // ==========================================
-    // 2. Herramientas del Testbench (Monitor y Reloj Baudios)
+    // 2. Testbench tools (monitor and baud clock)
     // ==========================================
     wire tb_s_tick;
     wire mon_rx_done;
     wire [7:0] mon_rx_byte;
 
-    // Generador de baudios exclusivo para que el TB sepa cuándo inyectar bits
+    // Dedicated baud generator so the TB knows when to inject bits
     baud_rate_generator #(
         .BAUD_RATE(BAUD_RATE),
         .FREQ(FREQ)
@@ -64,7 +64,7 @@ module tb_uart_interface;
         .tick_o(tb_s_tick)
     );
 
-    // Receptor "Monitor" para verificar lo que el UUT transmite por tx_pin
+    // "Monitor" receiver to check what the UUT sends over tx_pin
     uart_rx #(
         .DATA_BIT(DATA_BIT),
         .STOP_BIT_TICK(STOP_BIT_TICK)
@@ -78,37 +78,37 @@ module tb_uart_interface;
     );
 
     // ==========================================
-    // 3. Tareas de Emulación
+    // 3. Emulation tasks
     // ==========================================
-    
-// Tarea base: enviar 1 byte al uut (bit-banging por rx_pin)
+
+// Base task: send 1 byte to the uut (bit-banging over rx_pin)
     task send_byte_to_dut(input [7:0] byte);
         integer i, j;
         begin
-            // Start bit (bajo)
+            // Start bit (low)
             for (j = 0; j < 16; j = j + 1) begin
                 rx_pin = 0;
                 @(posedge tb_s_tick);
             end
-            
-            // Data bits (LSB primero)
+
+            // Data bits (LSB first)
             for (i = 0; i < DATA_BIT; i = i + 1) begin
                 for (j = 0; j < 16; j = j + 1) begin
                     rx_pin = byte[i];
                     @(posedge tb_s_tick);
                 end
-            end   
-            
-            // Stop bit (alto)
+            end
+
+            // Stop bit (high)
             for (j = 0; j < 16; j = j + 1) begin
                 rx_pin = 1;
                 @(posedge tb_s_tick);
             end
-            
-            // ====== SOLUCIÓN 1: TIEMPO DE GUARDA ======
-            // Añadimos un pequeño reposo de 4 ticks entre bytes.
-            // Esto asegura que la máquina de estados del RX tenga ciclos
-            // suficientes para transicionar de 'stop' a 'idle' sin errores.
+
+            // ====== FIX 1: GUARD TIME ======
+            // We add a small rest of 4 ticks between bytes.
+            // This makes sure the RX state machine has enough cycles to move
+            // from 'stop' to 'idle' without errors.
             for (j = 0; j < 4; j = j + 1) begin
                 rx_pin = 1;
                 @(posedge tb_s_tick);
@@ -116,28 +116,28 @@ module tb_uart_interface;
         end
     endtask
 
-    // Tarea de alto nivel: Enviar 40 bits simulando al PC (MSB primero)
+    // High level task: send 40 bits emulating the PC (MSB first)
     task send_40b_to_dut(input [39:0] data);
         begin
             $display("  [RX Test] Inyectando 5 bytes al RX: 0x%010h", data);
-            
-            // ====== SOLUCIÓN 2: FORK-JOIN ======
-            // Ejecutamos hilos en paralelo. Un hilo inyecta los datos y 
-            // el otro vigila el 'rx_done_40b' desde el instante cero.
+
+            // ====== FIX 2: FORK-JOIN ======
+            // We run threads in parallel. One thread injects the data and the
+            // other watches 'rx_done_40b' from time zero.
             fork
-                begin : inyectar_datos
+                begin : inject_data
                     send_byte_to_dut(data[39:32]);
                     send_byte_to_dut(data[31:24]);
                     send_byte_to_dut(data[23:16]);
                     send_byte_to_dut(data[15:8]);
                     send_byte_to_dut(data[7:0]);
                 end
-                begin : vigilar_done
+                begin : watch_done
                     @(posedge rx_done_40b);
                 end
             join
-            
-            // Cuando ambos hilos terminan, verificamos el resultado
+
+            // When both threads are done, we check the result
             $display("  [RX Test] DUT agrupo correctamente: 0x%010h", rx_data_40b);
             if (rx_data_40b === data)
                 $display("  [RX Test] RESULTADO: EXITO");
@@ -146,30 +146,30 @@ module tb_uart_interface;
         end
     endtask
 
-    // Tarea de alto nivel: Disparar transmisión y recolectar usando el monitor
+    // High level task: trigger the transmission and collect it with the monitor
     task check_tx_40b(input [39:0] expected_data);
         reg [39:0] captured_data;
         integer k;
         begin
             $display("  [TX Test] Iniciando transmision del DUT: 0x%010h", expected_data);
             tx_data_40b = expected_data;
-            
-            // Pulso de inicio
+
+            // Start pulse
             tx_start_40b = 1;
             @(posedge clk);
             tx_start_40b = 0;
 
-            // Recolectar los 5 bytes desde el monitor RX
+            // Collect the 5 bytes from the RX monitor
             captured_data = 40'h0;
             for (k = 0; k < 5; k = k + 1) begin
                 @(posedge mon_rx_done);
-                // Ir desplazando el registro a medida que llegan (MSB primero)
+                // Shift the register as they arrive (MSB first)
                 captured_data = {captured_data[31:0], mon_rx_byte};
             end
-            
-            // Esperar a que el DUT baje su señal de busy
+
+            // Wait for the DUT to lower its busy signal
             wait(tx_busy == 0);
-            
+
             $display("  [TX Test] Monitor recolecto: 0x%010h", captured_data);
             if (expected_data === captured_data)
                 $display("  [TX Test] RESULTADO: EXITO");
@@ -179,34 +179,34 @@ module tb_uart_interface;
     endtask
 
     // ==========================================
-    // 4. Secuencia Principal de Simulación
+    // 4. Main simulation sequence
     // ==========================================
     initial begin
         $display("=== Iniciando Testbench UART 5 Bytes ===");
-        
-        // Condiciones iniciales
+
+        // Initial conditions
         clk = 0;
         reset = 1;
-        rx_pin = 1; // Reposo UART
+        rx_pin = 1; // UART idle
         tx_start_40b = 0;
         tx_data_40b = 0;
-        
+
         #150 reset = 0;
         #1000;
 
-        // --- PRUEBA RX ---
-        // Se probará enviando una instrucción RISC-V simulada (por ejemplo)
+        // --- RX TEST ---
+        // Tested by sending a simulated RISC-V instruction (for example)
         send_40b_to_dut(40'h01_A5_B4_C3_D2);
         #5000;
-        
+
         send_40b_to_dut(40'hFF_EE_DD_CC_BB);
         #5000;
 
-        // --- PRUEBA TX ---
-        // Se probará enviando resultados simulados de la ALU hacia el exterior
+        // --- TX TEST ---
+        // Tested by sending simulated ALU results to the outside
         check_tx_40b(40'h12_34_56_78_9A);
         #5000;
-        
+
         check_tx_40b(40'hAA_55_AA_55_00);
         #5000;
 

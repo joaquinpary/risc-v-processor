@@ -3,18 +3,18 @@
 // =============================================================================
 // alu_control
 //
-// Traduce el ALUOp del bus de control (2 bits) mas funct3 y el bit 30 de la
-// instruccion al codigo de 4 bits que entiende la ALU.
+// Translates the ALUOp from the control bus (2 bits) plus funct3 and bit 30 of
+// the instruction into the 4-bit code the ALU understands.
 //
-//   ALUOp = 00 -> ADD  (lw, sw, lui, jalr: calculo de direccion)
-//   ALUOp = 01 -> SUB  (branches: zero_o dice si rs1 == rs2)
-//   ALUOp = 10 -> tipo R, se decodifica con funct3 + bit30
-//   ALUOp = 11 -> tipo I aritmetico, se decodifica con funct3
+//   ALUOp = 00 -> ADD  (lw, sw, lui, jalr: address computation)
+//   ALUOp = 01 -> SUB  (branches: zero_o tells whether rs1 == rs2)
+//   ALUOp = 10 -> R-type, decoded with funct3 + bit30
+//   ALUOp = 11 -> arithmetic I-type, decoded with funct3
 //
-// OJO con el bit 30 en ALUOp = 11: para addi ese bit es parte del inmediato
-// (addi con un numero negativo lo tiene en 1), asi que NO se puede usar para
-// elegir entre suma y resta. Solo es una variante real en srli/srai, donde
-// pertenece al campo funct7 del formato de desplazamiento inmediato.
+// CAREFUL with bit 30 when ALUOp = 11: for addi that bit is part of the
+// immediate (addi with a negative number has it set), so it CANNOT be used to
+// pick between add and subtract. It is only a real variant in srli/srai, where
+// it belongs to the funct7 field of the immediate shift format.
 // =============================================================================
 
 module alu_control(
@@ -39,18 +39,18 @@ module alu_control(
     reg [3:0]   alu_ctrl_aux;
 
     always @(*) begin
-        // Valor por defecto: todos los caminos asignan, pero dejarlo explicito
-        // evita cualquier riesgo de latch inferido.
+        // Default value: every path assigns, but making it explicit avoids any
+        // risk of an inferred latch.
         alu_ctrl_aux = ALU_ADD;
 
         case (alu_op_i)
-            // ---- Direcciones de memoria, lui y jalr ----
+            // ---- Memory addresses, lui and jalr ----
             2'b00: alu_ctrl_aux = ALU_ADD;
 
-            // ---- Branches: la resta deja zero_o en 1 si son iguales ----
+            // ---- Branches: the subtraction leaves zero_o at 1 if equal ----
             2'b01: alu_ctrl_aux = ALU_SUB;
 
-            // ---- Tipo R ----
+            // ---- R-type ----
             2'b10: begin
                 case (funct3_i)
                     3'b000: alu_ctrl_aux = bit30_i ? ALU_SUB : ALU_ADD; // add/sub
@@ -64,16 +64,16 @@ module alu_control(
                 endcase
             end
 
-            // ---- Tipo I aritmetico ----
+            // ---- Arithmetic I-type ----
             2'b11: begin
                 case (funct3_i)
-                    // addi: bit30 es parte del inmediato, se ignora
+                    // addi: bit30 is part of the immediate, it is ignored
                     3'b000: alu_ctrl_aux = ALU_ADD;                     // addi
                     3'b001: alu_ctrl_aux = ALU_SLL;                     // slli
                     3'b010: alu_ctrl_aux = ALU_SLT;                     // slti
                     3'b011: alu_ctrl_aux = ALU_SLTU;                    // sltiu
                     3'b100: alu_ctrl_aux = ALU_XOR;                     // xori
-                    // srli/srai: aca el bit30 SI distingue la variante
+                    // srli/srai: here bit30 DOES tell the variants apart
                     3'b101: alu_ctrl_aux = bit30_i ? ALU_SRA : ALU_SRL; // srli/srai
                     3'b110: alu_ctrl_aux = ALU_OR;                      // ori
                     3'b111: alu_ctrl_aux = ALU_AND;                     // andi
