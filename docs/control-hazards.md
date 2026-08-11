@@ -350,8 +350,11 @@ ciclo N+3 : DEST en ID
 ```
 
 Penalidad: **3 ciclos** por salto tomado. Los saltos no tomados no cuestan nada
-(de ahí lo de "predict not taken"). Para `jal`, `jump_ex=1` siempre, así que
-siempre paga los 2 ciclos.
+(de ahí lo de "predict not taken"). Para `jal` y `jalr`, `jump_ex=1` siempre, así
+que siempre pagan los 3 ciclos.
+
+> El tercer ciclo viene de que la etapa IF ocupa dos ciclos por la latencia de la
+> BRAM de instrucciones. Está analizado en [pipeline-depth.md](pipeline-depth.md).
 
 ---
 
@@ -374,13 +377,13 @@ siempre paga los 2 ciclos.
 ```asm
         addi x1, x0, 5
         addi x2, x0, 5
-        beq  x1, x2, DEST     # tomado -> 2 burbujas
+        beq  x1, x2, DEST     # tomado -> 3 burbujas
         addi x3, x0, 99       # NO debe ejecutarse  (x3 = 0)
         addi x4, x0, 88       # NO debe ejecutarse  (x4 = 0)
 DEST:   addi x5, x0, 7        # x5 = 7
         bne  x1, x2, FIN      # NO tomado -> sigue derecho
         addi x6, x0, 1        # x6 = 1
-FIN:    jal  x7, END          # x7 = pc+4, 2 burbujas
+FIN:    jal  x7, END          # x7 = pc+4, 3 burbujas
         addi x8, x0, 77       # NO debe ejecutarse  (x8 = 0)
 END:    ...
 ```

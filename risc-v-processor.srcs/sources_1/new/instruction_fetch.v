@@ -1,5 +1,28 @@
 `timescale 1ns / 1ps
 
+// =====================================================================
+// Etapa IF - ocupa DOS ciclos de reloj
+//
+// instruction_memory es una block RAM con salida registrada, asi que su
+// latencia de lectura es 1: la palabra sale por doutb un ciclo despues de
+// presentar la direccion por addrb. La busqueda queda partida en dos:
+//
+//   IF1: pc_reg presenta la direccion a la BRAM
+//   IF2: la instruccion esta disponible en doutb (= instruction_o)
+//
+// y recien en el ciclo siguiente el latch IF/ID de top.v la captura. En
+// niveles de registro el pipeline tiene seis, no cinco. Las etapas logicas
+// siguen siendo las cinco clasicas.
+//
+// Consecuencias (analisis completo en docs/pipeline-depth.md):
+//   - la penalidad de un salto tomado es de 3 ciclos, no 2
+//   - hace falta pc_fetched para alinear el PC con su instruccion (ver abajo)
+//   - hace falta el skid buffer de top.v, porque el puerto B se genero sin
+//     pin ENB y su registro de salida no se puede congelar en un stall
+//
+// La productividad NO se ve afectada: en regimen sale una instruccion por ciclo.
+// =====================================================================
+
 module instruction_fetch(
     input wire          clk,
     input wire          reset,

@@ -67,8 +67,10 @@ module memory(
     //
     // La resolucion de saltos se movio a la etapa EX (ver top.v): alli se
     // decide con funct3, lo que permite soportar bne ademas de beq y baja la
-    // penalidad de 3 ciclos a 2. Dejar esta salida activa provocaria un
-    // segundo redireccionamiento del PC, asi que se ata a cero.
+    // penalidad de 4 ciclos a 3. (Son 3 y no 2 porque la etapa IF ocupa dos
+    // ciclos por la latencia de la BRAM de instrucciones: ver
+    // docs/pipeline-depth.md.) Dejar esta salida activa provocaria un segundo
+    // redireccionamiento del PC, asi que se ata a cero.
     assign pc_src_o = 1'b0;
     
     // Data Memory
