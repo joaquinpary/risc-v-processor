@@ -26,36 +26,57 @@ module memory(
     output wire [4:0]   rd_o
     );
     
-    wire    [9:0]   mem_addr = result_i[9:0];
+    // -------------------------------------------------------------------
+    // Direccionamiento
+    //
+    // La BRAM tiene 1024 palabras de 32 bits y addra es un indice de PALABRA,
+    // pero result_i es una direccion de BYTE. Hay que separarla: los bits
+    // [11:2] eligen la palabra y los [1:0] el byte dentro de ella.
+    //
+    // (Antes se usaba result_i[9:0] directo como indice de palabra. Para
+    // accesos de palabra completa era consistente consigo mismo, pero saltaba
+    // de a 4 posiciones y hacia imposible direccionar un byte suelto.)
+    // -------------------------------------------------------------------
+    wire    [9:0]   mem_addr   = result_i[11:2];
+    wire    [1:0]   byte_off   = result_i[1:0];
+
     wire            mem_write = control_i[4];
     wire            mem_read = control_i[5];
-    wire            branch = control_i[6];
-    wire            jump = control_i[3];
+    // control_i[6] (Branch), control_i[3] (Jump), zero_i y pc_branch_i ya no se
+    // usan aca: la decision del salto se toma en EX.
+
+    reg     [3:0]   size_mask;      // que bytes toca la instruccion, sin desplazar
     reg     [3:0]   byte_write_en;
-    
+    reg     [31:0]  write_data;
+
     always @(*) begin
-        if (mem_write) begin
-            case (funct3_i)
-                3'b000: byte_write_en = 4'b0001; // SB
-                3'b001: byte_write_en = 4'b0011; // SH
-                3'b010: byte_write_en = 4'b1111; // SW
-                default: byte_write_en = 4'b1111;
-            endcase
-        end else begin
-            byte_write_en = 4'b0000;
-        end
+        case (funct3_i)
+            3'b000:  size_mask = 4'b0001;   // sb
+            3'b001:  size_mask = 4'b0011;   // sh
+            3'b010:  size_mask = 4'b1111;   // sw
+            default: size_mask = 4'b1111;
+        endcase
+
+        // La mascara y el dato se corren al carril que indica la direccion:
+        // sin esto un sb siempre escribia el byte 0 sin importar el offset.
+        byte_write_en = mem_write ? (size_mask << byte_off) : 4'b0000;
+        write_data    = data2_i << (8 * byte_off);
     end
     
     // PCSrc
-    
-    assign pc_src_o = (branch & zero_i) | jump;
+    //
+    // La resolucion de saltos se movio a la etapa EX (ver top.v): alli se
+    // decide con funct3, lo que permite soportar bne ademas de beq y baja la
+    // penalidad de 3 ciclos a 2. Dejar esta salida activa provocaria un
+    // segundo redireccionamiento del PC, asi que se ata a cero.
+    assign pc_src_o = 1'b0;
     
     // Data Memory
     
     data_memory data_memory(
         .addra(mem_addr),
         .clka(clk),
-        .dina(data2_i),
+        .dina(write_data),
         .douta(read_data_o),
         .ena((mem_write | mem_read) & enable_i),
         .wea(byte_write_en),

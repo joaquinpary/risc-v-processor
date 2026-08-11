@@ -1,10 +1,30 @@
 # Riesgos de Control — Flush estático (Predict Not Taken)
 
+> **Estado: implementado.** Este documento describe el diseño y las trampas que
+> aparecieron al aplicarlo. La verificación está en `tools/test_pipeline.py`.
+
 Predicción estática **"siempre no salta"**: el pipeline sigue buscando en secuencia
 y, si el salto resulta tomado, se vacían (flush) las instrucciones equivocadas.
 
-Resolución del salto en **EX** → penalidad de **2 ciclos** (se descartan las
-instrucciones en ID y en IF). Resolverlo en MEM, como está hoy, costaría 3.
+Resolución del salto en **EX**, no en MEM: cuanto antes se decida, menos
+instrucciones equivocadas entran.
+
+## ⚠️ Son TRES instrucciones en vuelo, no dos
+
+El modelo clásico de 5 etapas dice que resolver en EX cuesta 2 ciclos. **Acá
+cuesta 3**, porque la BRAM de instrucciones agrega una etapa que ese modelo no
+contempla. En el momento en que el salto se confirma hay tres instrucciones del
+camino equivocado dando vueltas:
+
+1. la que está en ID,
+2. la que ya salió de la BRAM y espera en `doutb`,
+3. **la que se está buscando en ese mismo ciclo**, que va a aparecer en `doutb`
+   al ciclo siguiente — el redireccionamiento del PC llega tarde para evitarla.
+
+Vaciar IF/ID un solo ciclo mata (1) y (2) pero **deja pasar (3)**. Esto no es
+teórico: se detectó con `jalr`, que ejecutaba la instrucción ubicada tres
+lugares después del salto. Por eso el vaciado del frente dura dos ciclos
+(`flush_if = flush | flush_d1`).
 
 > Requiere tener aplicada la etapa de riesgos de datos
 > ([hazard-mitigation.md](hazard-mitigation.md)): el flush interactúa con el
@@ -314,19 +334,22 @@ no depender de él.
 Programa: `beq x1,x2,DEST` en `0x10`, `I2` en `0x14`, `I3` en `0x18`, `DEST` en `0x40`.
 
 ```
-ciclo N   : beq en EX, I2 en ID, I3 en IF
+ciclo N   : beq en EX; I2 en ID; I3 esperando en doutb; se busca I4
             branch_cond_ok=1 -> branch_taken_ex=1 -> flush=1
             branch_target_ex = 0x10 + imm = 0x40
 flanco N  : PC <- 0x40                    (redireccion)
-            IF/ID <- burbuja              (I3 descartada, if_id_valid=0)
-            ID/EX <- burbuja              (I2 descartada, control=0)
+            IF/ID <- burbuja              (I3 descartada)
+            ID/EX <- burbuja              (I2 descartada)
+            flush_d1 <- 1
             beq -> MEM (sigue normal, no escribe nada)
-ciclo N+1 : burbuja en EX, burbuja en ID, se busca DEST (0x40)
-ciclo N+2 : DEST en ID
-ciclo N+3 : DEST en EX
+ciclo N+1 : flush_if sigue en 1 por flush_d1; doutb trae I4 (camino equivocado)
+flanco N+1: IF/ID <- burbuja              (I4 descartada)
+ciclo N+2 : doutb trae DEST (0x40)
+flanco N+2: IF/ID <- DEST
+ciclo N+3 : DEST en ID
 ```
 
-Penalidad: **2 ciclos** por salto tomado. Los saltos no tomados no cuestan nada
+Penalidad: **3 ciclos** por salto tomado. Los saltos no tomados no cuestan nada
 (de ahí lo de "predict not taken"). Para `jal`, `jump_ex=1` siempre, así que
 siempre paga los 2 ciclos.
 
@@ -339,8 +362,8 @@ siempre paga los 2 ciclos.
 | 1 | `execute.v` | Sacar `imm_shifted`, usar `pc_i + imm_gen_i` |
 | 2 | `instruction_fetch.v` | Registro `pc_fetched`, `addrb` desde `pc_reg` |
 | 3 | `top.v` | Bloque de resolución en EX (`branch_taken_ex`, `flush`) |
-| 4 | `top.v` | Flush en latch IF/ID + `if_id_valid` |
-| 5 | `top.v` | Flush en latch ID/EX (`control_mux \| flush`) |
+| 4 | `top.v` | Flush en latch IF/ID (2 ciclos: `flush_if`) + `if_id_valid` |
+| 5 | `top.v` | Flush en latch ID/EX (`control_mux \| flush_if`) |
 | 6 | `top.v` | `pc_src_i` / `pc_branch_i` desde EX, `pc_write_en_i` con prioridad |
 | 7 | `top.v` | `cpu_halted` con `if_id_valid` |
 | 8 | `top.v` | Flush invalida el skid buffer |

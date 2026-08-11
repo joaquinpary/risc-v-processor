@@ -116,39 +116,16 @@ PSEUDO_SIZE = {"nop": 1, "mv": 1, "j": 1, "jr": 1, "ret": 1, "li": None}
 # =====================================================================
 # Qué soporta REALMENTE este procesador
 # =====================================================================
-# La ALU del TP (alu.v) implementa sólo AND/OR/ADD/SUB, y alu_control.v manda
-# todo lo que no reconoce al caso `default` (AND). Estas instrucciones se
-# codifican bien pero la FPGA las ejecuta mal: conviene avisarlo antes de que
-# el alumno pierda una tarde depurando el hardware equivocado.
+# Las 32 instrucciones que pide el TP ya están implementadas. Lo que queda acá
+# son las que el ensamblador sabe codificar pero el procesador todavía no
+# ejecuta, para que no se pierda una tarde depurando el hardware equivocado.
 
 CPU_UNSUPPORTED: dict[str, str] = {
-    "sll":   "la ALU no implementa desplazamientos (alu_control lo manda a AND)",
-    "srl":   "la ALU no implementa desplazamientos (alu_control lo manda a AND)",
-    "sra":   "la ALU no implementa desplazamientos (alu_control lo manda a AND)",
-    "slt":   "la ALU no implementa comparaciones (alu_control lo manda a AND)",
-    "sltu":  "la ALU no implementa comparaciones (alu_control lo manda a AND)",
-    "xor":   "la ALU no implementa XOR (alu_control lo manda a AND)",
-    "slli":  "la ALU no implementa desplazamientos",
-    "srli":  "la ALU no implementa desplazamientos",
-    "srai":  "la ALU no implementa desplazamientos",
-    "slti":  "la ALU no implementa comparaciones",
-    "sltiu": "la ALU no implementa comparaciones",
-    "xori":  "la ALU no implementa XOR",
-    "lui":   "control.v le pone ALUSrc=1 y suma rs1, pero lui no tiene rs1: da basura",
-    "auipc": "no esta en la tabla de control.v",
-    "bne":   "memory.v resuelve el salto con (branch & zero): solo funciona BEQ",
-    "blt":   "no implementado: la condicion de salto solo mira el flag zero",
-    "bge":   "no implementado: la condicion de salto solo mira el flag zero",
-    "bltu":  "no implementado: la condicion de salto solo mira el flag zero",
-    "bgeu":  "no implementado: la condicion de salto solo mira el flag zero",
-    "sb":    "el byte_write_en de memory.v no desplaza segun el offset",
-    "sh":    "el byte_write_en de memory.v no desplaza segun el offset",
-    "lb":    "memory.v no extrae ni extiende el sub-word leido",
-    "lh":    "memory.v no extrae ni extiende el sub-word leido",
-    "lbu":   "memory.v no extrae el sub-word leido",
-    "lhu":   "memory.v no extrae el sub-word leido",
-    "jal":   "el destino usa pc+imm con el inmediato desplazado de mas (ver docs/control-hazards.md)",
-    "jalr":  "el destino deberia ser rs1+imm, pero se calcula pc+imm",
+    "auipc": "no esta en la tabla de opcodes de control.v",
+    "blt":   "la condicion de salto solo decodifica beq y bne",
+    "bge":   "la condicion de salto solo decodifica beq y bne",
+    "bltu":  "la condicion de salto solo decodifica beq y bne",
+    "bgeu":  "la condicion de salto solo decodifica beq y bne",
 }
 
 
@@ -725,9 +702,12 @@ def _run_self_test() -> int:
             check(f"rechaza {source!r}", fragment in str(exc), True)
 
     print("\n=== Avisos de lo que esta CPU no ejecuta ===")
-    warned = assemble("sll x1, x2, x3\nbne x1, x2, 8\nlui x1, 1")
-    check("avisa sll/bne/lui", len(warned.warnings), 3)
-    check("no avisa de add/addi", len(assemble("add x1,x2,x3\naddi x1,x0,1").warnings), 0)
+    check("avisa de blt/bgeu (sin implementar)",
+          len(assemble("blt x1, x2, 8\nbgeu x1, x2, 8").warnings), 2)
+    supported = ("add x1,x2,x3\nsll x1,x2,x3\nslt x1,x2,x3\nxor x1,x2,x3\n"
+                 "srai x1,x2,3\nlui x1,1\nbne x1,x2,8\njal x1,8\n"
+                 "jalr x1,0(x2)\nlb x1,1(x2)\nsh x1,2(x2)\n")
+    check("no avisa de las 32 del TP", len(assemble(supported).warnings), 0)
 
     print("\n" + "=" * 54)
     if failures:

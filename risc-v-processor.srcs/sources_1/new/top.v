@@ -93,8 +93,11 @@ module top #(
     wire        pc_write, if_id_write, control_mux;
     wire        stall = ~pc_write;
 
-    wire [4:0]  rs1_addr_id = instruction_id[19:15];
-    wire [4:0]  rs2_addr_id = instruction_id[24:20];
+    // Registros fuente efectivos: instruction_decode los pone en x0 cuando el
+    // campo no es realmente un registro (lui, jal, y el rs2 de los tipo I).
+    // Usar los mismos aca evita forwarding espurio y stalls al pedo.
+    wire [4:0]  rs1_addr_id;
+    wire [4:0]  rs2_addr_id;
 
     reg  [4:0]  rs1_ex, rs2_ex;
 
@@ -119,6 +122,60 @@ module top #(
         .forward_b        (forward_b)
     );
 
+    // =========================================================================
+    // CONTROL HAZARDS - resolucion del salto en EX (prediccion "no salta")
+    //
+    // Se resuelve en EX y no en MEM: al confirmarse el salto se vacian las
+    // instrucciones que ya entraron por el camino equivocado. Resolverlo en MEM
+    // costaria un ciclo mas.
+    // =========================================================================
+    wire        branch_ex = control_bus_ex[6];      // Branch
+    wire        jump_ex   = control_bus_ex[3];      // Jump (jal / jalr)
+    wire        alu_src_ex = control_bus_ex[7];     // 1 solo en jalr, no en jal
+
+    // La ALU resta en los branches (ALUOp=01), asi que zero_o_ex = (rs1 == rs2);
+    // funct3 elige la polaridad.
+    reg         branch_cond_ok;
+    always @(*) begin
+        case (funct3_ex)
+            3'b000:  branch_cond_ok =  zero_o_ex;   // beq: salta si son iguales
+            3'b001:  branch_cond_ok = ~zero_o_ex;   // bne: salta si son distintos
+            default: branch_cond_ok =  zero_o_ex;
+        endcase
+    end
+
+    wire        branch_taken_ex = (branch_ex & branch_cond_ok) | jump_ex;
+
+    // jalr salta a rs1+imm, que es justamente el resultado de la ALU;
+    // beq/bne/jal usan pc+imm.
+    wire        jalr_ex = jump_ex & alu_src_ex;
+    wire [31:0] branch_target_ex = jalr_ex ? result_o_ex : pc_branch_o_ex;
+
+    // Senal global de vaciado
+    wire        flush = branch_taken_ex;
+
+    // La BRAM de instrucciones agrega una etapa que el modelo clasico de 5
+    // etapas no tiene: cuando el salto se resuelve en EX hay TRES instrucciones
+    // del camino equivocado en vuelo, no dos.
+    //
+    //   1) la que esta en ID,
+    //   2) la que ya salio de la BRAM y espera en doutb,
+    //   3) la que se esta buscando ahora mismo, que aparecera en doutb al ciclo
+    //      siguiente (el redireccionamiento del PC llega tarde para evitarla).
+    //
+    // Vaciar IF/ID un solo ciclo mata (1) y (2) pero deja pasar (3). Por eso el
+    // vaciado del frente se extiende un ciclo mas. Penalidad real: 3 ciclos.
+    reg         flush_d1;
+
+    always @(posedge clk) begin
+        if (pipeline_reset)
+            flush_d1 <= 1'b0;
+        else if (cpu_enable)
+            flush_d1 <= flush;
+    end
+
+    wire        flush_if = flush | flush_d1;
+
     // IF stage wires (outputs of instruction_fetch)
     wire    [31:0]  pc_if;
     wire    [31:0]  pc_plus_4_if;
@@ -130,6 +187,9 @@ module top #(
     reg     [31:0]  pc_id;
     reg     [31:0]  pc_plus_4_id;
     reg     [31:0]  instruction_id;
+    // Distingue una instruccion real de una burbuja de flush: sin esto, el
+    // detector de halt confundiria cada salto tomado con el fin del programa.
+    reg             if_id_valid;
 
     // ID stage wires (outputs of instruction_decode)
     wire    [4:0]   reg_d_wb;
@@ -189,6 +249,9 @@ module top #(
     // (read_data has no register here: the data BRAM output register is the
     //  MEM/WB boundary for it, see the write_back instance below)
     reg     [2:0]   control_wb;
+    // funct3 viaja hasta WB porque la extraccion del byte/media palabra de las
+    // cargas se hace alli: el dato de la BRAM recien llega en ese ciclo.
+    reg     [2:0]   funct3_wb;
     reg     [31:0]  result_wb;
     reg     [31:0]  pc_plus_4_wb;
     reg     [4:0]   rd_wb;
@@ -197,9 +260,10 @@ module top #(
     instruction_fetch u_if (
         .clk            (clk),
         .reset          (pipeline_reset),
-        .pc_write_en_i  (cpu_enable & pc_write),
-        .pc_src_i       (pc_src_mem),
-        .pc_branch_i    (pc_branch_o_mem),
+        // El salto tiene prioridad sobre el freno del stall
+        .pc_write_en_i  (cpu_enable & (pc_write | branch_taken_ex)),
+        .pc_src_i       (branch_taken_ex),
+        .pc_branch_i    (branch_target_ex),
         .ins_write_en_i (imem_we),
         .instruction_i  (imem_data),
         .mem_addr_i     (imem_addr),
@@ -219,7 +283,10 @@ module top #(
             instr_skid       <= 32'b0;
             instr_skid_valid <= 1'b0;
         end else if (cpu_enable) begin
-            if (stall) begin
+            if (flush_if) begin
+                // La palabra guardada es del camino no tomado: se descarta
+                instr_skid_valid <= 1'b0;
+            end else if (stall) begin
                 if (!instr_skid_valid) begin
                     instr_skid       <= instruction_if;
                     instr_skid_valid <= 1'b1;
@@ -276,15 +343,28 @@ module top #(
     end
 
     // ===== IF/ID latch =====
+    // El flush tiene prioridad sobre el freno del stall (if_id_write). En la
+    // practica no pueden coexistir -una instruccion en EX no puede ser load y
+    // salto a la vez- pero el orden correcto lo deja a prueba de cambios.
     always @(posedge clk) begin
         if (pipeline_reset) begin
             pc_id           <= 32'b0;
             pc_plus_4_id    <= 32'b0;
             instruction_id  <= 32'b0;
-        end else if (cpu_enable && if_id_write) begin
-            pc_id           <= pc_if;
-            pc_plus_4_id    <= pc_plus_4_if;
-            instruction_id  <= instruction_if_eff;
+            if_id_valid     <= 1'b0;
+        end else if (cpu_enable) begin
+            if (flush_if) begin
+                // Burbuja: la instruccion venia del camino no tomado
+                pc_id           <= 32'b0;
+                pc_plus_4_id    <= 32'b0;
+                instruction_id  <= 32'b0;
+                if_id_valid     <= 1'b0;
+            end else if (if_id_write) begin
+                pc_id           <= pc_if;
+                pc_plus_4_id    <= pc_plus_4_if;
+                instruction_id  <= instruction_if_eff;
+                if_id_valid     <= 1'b1;
+            end
         end
     end
 
@@ -308,7 +388,9 @@ module top #(
         .imm_gen_o       (imm_gen_o_id),
         .funct3_o        (funct3_o_id),
         .bit30_o         (bit30_o_id),
-        .rd_o            (rd_o_id)
+        .rd_o            (rd_o_id),
+        .rs1_o           (rs1_addr_id),
+        .rs2_o           (rs2_addr_id)
     );
 
     // ===== ID/EX latch =====
@@ -330,7 +412,8 @@ module top #(
             pc_ex           <= pc_o_id;
             pc_plus_4_ex    <= pc_plus_4_o_id;
             pc_branch_ex    <= pc_branch_o_ex;
-            control_bus_ex  <= control_mux ? 10'b0 : control_bus_o_id;
+            // Burbuja por stall de load-use (control_mux) O por salto tomado
+            control_bus_ex  <= (control_mux | flush_if) ? 10'b0 : control_bus_o_id;
             read_data_1_ex  <= read_data_1_o_id;
             read_data_2_ex  <= read_data_2_o_id;
             imm_gen_ex      <= imm_gen_o_id;
@@ -408,7 +491,9 @@ module top #(
         .clk           (clk),
         .reset         (pipeline_reset),
         .enable_i      (cpu_enable),
-        .debug_addr_i  (debug_mem_addr[9:0]),
+        // Indice de palabra, igual que el puerto del procesador: la direccion
+        // que manda el dashboard es de byte.
+        .debug_addr_i  (debug_mem_addr[11:2]),
         .control_i     (control_mem),
         .pc_plus_4_i   (pc_plus_4_mem),
         .pc_branch_i   (pc_branch_mem),
@@ -432,11 +517,13 @@ module top #(
     always @(posedge clk) begin
         if (pipeline_reset) begin
             control_wb      <= 3'b0;
+            funct3_wb       <= 3'b0;
             result_wb       <= 32'b0;
             pc_plus_4_wb    <= 32'b0;
             rd_wb           <= 5'b0;
         end else if (cpu_enable) begin
             control_wb      <= control_o_mem;
+            funct3_wb       <= funct3_mem;
             result_wb       <= result_o_mem;
             pc_plus_4_wb    <= pc_plus_4_o_mem;
             rd_wb           <= rd_o_mem;
@@ -446,6 +533,7 @@ module top #(
     // ===== WB stage =====
     write_back u_wb (
         .control_i      (control_wb),
+        .funct3_i       (funct3_wb),
         // The data BRAM output register (read latency 1) already acts as the
         // MEM/WB latch for this value: adding another register here would
         // capture it twice and deliver the loaded word one cycle late.
@@ -459,6 +547,9 @@ module top #(
     );
 
     // Halt detection
-    assign cpu_halted = (instruction_id == 32'b0 && pc_if > 32'h00000010);
+    // if_id_valid excluye las burbujas de flush, que tambien tienen
+    // instruction_id == 0 y si no frenarian el procesador en cada salto tomado.
+    assign cpu_halted = (instruction_id == 32'b0) && if_id_valid
+                                                  && (pc_if > 32'h00000010);
 
 endmodule

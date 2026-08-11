@@ -19,7 +19,7 @@ module instruction_fetch(
     // PC register
 
     reg [31:0] pc_reg;
-    
+
     always @(posedge clk) begin
         if (reset) begin
             pc_reg <= 32'h0000_0000;
@@ -32,6 +32,29 @@ module instruction_fetch(
             end
         end
     end
+
+    // -------------------------------------------------------------------
+    // PC alineado con su instruccion
+    //
+    // La BRAM de instrucciones tiene latencia de lectura 1: la palabra sale un
+    // ciclo despues de presentar la direccion, y para entonces pc_reg ya
+    // avanzo. Sin corregirlo, el latch IF/ID guarda la instruccion de la
+    // direccion P junto con el PC P+4, y como el destino de un salto se calcula
+    // pc + imm, TODOS los saltos quedaban corridos 4 bytes (y el valor de
+    // enlace de jal tambien).
+    //
+    // pc_fetched va un ciclo atras de pc_reg, o sea que viaja junto a la
+    // instruccion que sale por doutb. Comparte el enable con pc_reg, asi que
+    // durante un stall los dos se congelan juntos y la alineacion se mantiene.
+    // -------------------------------------------------------------------
+    reg [31:0] pc_fetched;
+
+    always @(posedge clk) begin
+        if (reset)
+            pc_fetched <= 32'h0000_0000;
+        else if (pc_write_en_i)
+            pc_fetched <= pc_reg;
+    end
     
     // Intruction memory
     
@@ -42,12 +65,13 @@ module instruction_fetch(
         .ena    (ins_write_en_i),
         .wea    (1'b1),
         
-        .addrb  (pc_o[11:2]),           // PC+4
+        .addrb  (pc_reg[11:2]),         // direccion en curso
         .clkb   (clk),
         .doutb  (instruction_o)
     );
-    
-    assign pc_o = pc_reg;
-    assign pc_plus_4_o = pc_reg + 32'd4;
+
+    // pc_o y pc_plus_4_o acompanan a instruction_o, no a la busqueda en curso
+    assign pc_o = pc_fetched;
+    assign pc_plus_4_o = pc_fetched + 32'd4;
     
 endmodule
