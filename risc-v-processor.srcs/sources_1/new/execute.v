@@ -26,10 +26,12 @@ module execute(
     
     wire    [3:0]   alu_ctrl;
     
-    // Branch ADD
-    
-    wire    [31:0]  imm_shifted = {imm_gen_i[30:0], 1'b0};
-    assign pc_branch_o = pc_i + imm_shifted;  
+    // Branch target.
+    //
+    // imm_gen ALREADY gives the offset in bytes: for the B and J formats the
+    // immediate ends in 1'b0, so the x2 is already done. Shifting it again
+    // (as it did before) sent every branch to twice the requested distance.
+    assign pc_branch_o = pc_i + imm_gen_i;
     
     // MUX
     wire    [31:0]  data_2;

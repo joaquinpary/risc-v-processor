@@ -1,13 +1,12 @@
 """
-Dashboard TUI para el procesador RISC-V segmentado.
+TUI dashboard for the pipelined RISC-V processor.
 
-Uso:
+Usage:
     python -m riscv_debug --port /dev/ttyUSB0
     python -m riscv_debug --port COM3 --baud 9600
 
-El bucle principal es asíncrono; la E/S serie (bloqueante) corre en threads y la
-entrada del usuario también, así que la interfaz nunca se traba esperando a la
-placa.
+The main loop is async; the serial I/O (blocking) runs in threads and so does
+the user input, so the interface never freezes waiting for the board.
 """
 
 from __future__ import annotations
@@ -42,21 +41,21 @@ from .protocol import ProtocolError, REGISTER_COUNT
 from .riscv_assembler import AssemblerError, load_file
 from .ui import CpuState, render_dashboard
 
-#: Palabras de la memoria de instrucciones (instruction_memory: addrb = pc[11:2]).
+#: Words in the instruction memory (instruction_memory: addrb = pc[11:2]).
 IMEM_WORDS = 1024
 
 console = Console()
 
 
 # ----------------------------------------------------------------------
-# Operaciones sobre la placa
+# Board operations
 # ----------------------------------------------------------------------
 async def refresh_state(link: DebugLink, state: CpuState) -> None:
     """
-    Relee el PC y los 32 registros, actualizando la pantalla a medida que llegan.
+    Re-reads the PC and the 32 registers, updating the screen as they arrive.
 
-    Cada registro se pide por separado (el protocolo no tiene lectura en bloque),
-    así que se ve la tabla llenarse en vivo.
+    Each register is asked for separately (the protocol has no block read), so
+    the table can be seen filling up live.
     """
     state.begin_refresh()
     state.status = "Leyendo estado..."
@@ -86,7 +85,7 @@ async def refresh_state(link: DebugLink, state: CpuState) -> None:
 
 
 async def do_step(link: DebugLink, state: CpuState) -> None:
-    """Avanza un ciclo de reloj y relee todo el estado."""
+    """Advances one clock cycle and re-reads the whole state."""
     await link.step()
     state.cycles += 1
     await refresh_state(link, state)
@@ -94,11 +93,11 @@ async def do_step(link: DebugLink, state: CpuState) -> None:
 
 async def do_run(link: DebugLink, state: CpuState) -> None:
     """
-    Arranca la ejecución libre y espera a que la CPU frene.
+    Starts the free run and waits for the CPU to stop.
 
-    Mientras está en RUNNING el debug_unit no atiende la UART, así que se
-    detecta el fin sondeando: la primera respuesta a un REQ_PC significa que
-    volvió a IDLE (o sea, se activó cpu_halted).
+    While in RUNNING the debug_unit does not listen to the UART, so the end is
+    detected by polling: the first answer to a REQ_PC means it went back to
+    IDLE (that is, cpu_halted went active).
     """
     state.status = "Ejecutando..."
     console.print(
@@ -125,13 +124,13 @@ async def do_run(link: DebugLink, state: CpuState) -> None:
         )
         return
 
-    state.cycles = 0  # la cuenta de ciclos manual pierde sentido tras un RUN
+    state.cycles = 0  # the manual cycle count makes no sense after a RUN
     await refresh_state(link, state)
     state.status = "Detenido (halt)"
 
 
 async def do_reset(link: DebugLink, state: CpuState) -> None:
-    """Reinicia la CPU y limpia la vista."""
+    """Restarts the CPU and clears the view."""
     await link.reset()
     state.reset_values()
     await refresh_state(link, state)
@@ -140,17 +139,17 @@ async def do_reset(link: DebugLink, state: CpuState) -> None:
 
 async def do_load_program(link: DebugLink, state: CpuState) -> None:
     """
-    Ensambla un archivo .s/.asm/.hex y lo carga en la memoria de instrucciones.
+    Assembles a .s/.asm/.hex file and loads it into the instruction memory.
 
-    Al terminar manda un RESET (incluido en link.load_program) para dejar el PC
-    en 0 y el pipeline listo, y relee el estado.
+    When it finishes it sends a RESET (included in link.load_program) to leave
+    the PC at 0 and the pipeline ready, and re-reads the state.
     """
     raw = await asyncio.to_thread(
         Prompt.ask, "[cyan]Archivo[/cyan] (.s / .asm / .hex)"
     )
     path = Path(raw.strip().strip('"').strip("'")).expanduser()
 
-    # ---- Ensamblado ----
+    # ---- Assembly ----
     try:
         program = await asyncio.to_thread(load_file, path)
     except AssemblerError as exc:
@@ -165,7 +164,7 @@ async def do_load_program(link: DebugLink, state: CpuState) -> None:
         state.last_error = "El archivo no tiene instrucciones"
         return
 
-    # ---- Vista previa ----
+    # ---- Preview ----
     listing = Table(show_header=True, header_style="bold magenta", box=None)
     listing.add_column("Dir", style="dim", width=8)
     listing.add_column("Palabra", width=10)
@@ -181,7 +180,7 @@ async def do_load_program(link: DebugLink, state: CpuState) -> None:
         border_style="cyan",
     ))
 
-    # Avisos: instrucciones que se codifican bien pero esta CPU no ejecuta
+    # Warnings: instructions that encode fine but this CPU does not run
     if program.warnings:
         console.print(Panel(
             _stack([Text(f"• {w}", style="yellow") for w in program.warnings]),
@@ -205,7 +204,7 @@ async def do_load_program(link: DebugLink, state: CpuState) -> None:
     if confirm != "s":
         return
 
-    # ---- Envío con barra de progreso ----
+    # ---- Sending with a progress bar ----
     state.status = "Cargando programa..."
     with Progress(
         SpinnerColumn(),
@@ -244,7 +243,7 @@ async def do_load_program(link: DebugLink, state: CpuState) -> None:
 
 
 async def do_read_memory(link: DebugLink, state: CpuState) -> None:
-    """Lee una palabra de la memoria de datos (puerto B, no frena la CPU)."""
+    """Reads a word from the data memory (port B, it does not stop the CPU)."""
     raw = await asyncio.to_thread(
         Prompt.ask, "[cyan]Dirección[/cyan] (hex con 0x, o decimal)", default="0"
     )
@@ -270,10 +269,10 @@ async def do_read_memory(link: DebugLink, state: CpuState) -> None:
 
 
 # ----------------------------------------------------------------------
-# Bucle principal
+# Main loop
 # ----------------------------------------------------------------------
 async def interactive_loop(link: DebugLink, state: CpuState) -> None:
-    """Dibuja el dashboard y atiende el menú hasta que el usuario salga."""
+    """Draws the dashboard and serves the menu until the user quits."""
     actions = {
         "1": do_step,
         "2": do_run,
@@ -302,7 +301,7 @@ async def interactive_loop(link: DebugLink, state: CpuState) -> None:
         try:
             await actions[choice](link, state)
         except DebugLinkError as exc:
-            # Se perdió el puerto (placa desenchufada, por ejemplo).
+            # The port was lost (board unplugged, for example).
             state.connected = link.is_open
             state.last_error = str(exc)
             state.status = "Enlace caído"
@@ -339,7 +338,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def report_port_error(exc: PortUnavailable, requested: str) -> None:
-    """Muestra el error de conexión junto con los puertos que sí existen."""
+    """Shows the connection error together with the ports that do exist."""
     lines = [Text(str(exc), style="bold red"), Text("")]
 
     ports = available_ports()
@@ -372,7 +371,7 @@ def report_port_error(exc: PortUnavailable, requested: str) -> None:
 
 
 def _stack(items: list[Text]) -> Text:
-    """Une varios Text en uno solo separado por saltos de línea."""
+    """Joins several Text objects into one, separated by line breaks."""
     out = Text()
     for index, item in enumerate(items):
         if index:

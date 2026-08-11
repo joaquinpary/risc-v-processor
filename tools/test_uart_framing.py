@@ -1,16 +1,16 @@
 """
-Test de regresion del encuadre UART.
-uart_interface, replicando el RTL linea por linea.
+UART framing regression test.
+uart_interface, replicating the RTL line by line.
 
-Sirve para verificar los dos parches (sincronizador y reencuadre) sin Vivado.
+Useful to check the two fixes (synchronizer and resync) without Vivado.
 """
 
-CLOCK_TICK = 651        # FREQ 100e6 / (9600*16), igual que el RTL
-BIT_CLOCKS = 16 * CLOCK_TICK   # duracion nominal de un bit en la linea
+CLOCK_TICK = 651        # FREQ 100e6 / (9600*16), same as the RTL
+BIT_CLOCKS = 16 * CLOCK_TICK   # nominal duration of one bit on the line
 
 
 class BaudGen:
-    """baud_rate_gen.v tal cual esta (asignaciones bloqueantes)."""
+    """baud_rate_gen.v exactly as it is (blocking assignments)."""
     def __init__(self):
         self.count = 0
         self.tick = 0
@@ -26,7 +26,7 @@ class BaudGen:
 
 
 class UartRx:
-    """uart_rx.v CON el sincronizador de 2 flops (parche A)."""
+    """uart_rx.v WITH the 2-flop synchronizer (fix A)."""
     IDLE, START, DATA, STOP = 0, 1, 2, 3
 
     def __init__(self, synchronizer=True):
@@ -40,11 +40,11 @@ class UartRx:
         self.done = 0
 
     def edge(self, rx, s_tick):
-        # --- sincronizador (bloque secuencial aparte) ---
+        # --- synchronizer (separate sequential block) ---
         sampled = self.rx_sync if self.synchronizer else rx
         new_meta, new_sync = rx, self.rx_meta
 
-        # --- logica combinacional de proximo estado ---
+        # --- combinational next state logic ---
         state_next, s_next, n_next, b_next = self.state, self.s, self.n, self.b
         self.done = 0
 
@@ -76,7 +76,7 @@ class UartRx:
                 else:
                     s_next = self.s + 1
 
-        # --- actualizacion de registros ---
+        # --- register update ---
         self.state, self.s, self.n, self.b = state_next, s_next, n_next, b_next
         if self.synchronizer:
             self.rx_meta, self.rx_sync = new_meta, new_sync
@@ -84,7 +84,7 @@ class UartRx:
 
 
 class UartInterfaceRx:
-    """Logica RX de uart_interface.v CON reencuadre por silencio (parche B)."""
+    """RX logic of uart_interface.v WITH idle frame resync (fix B)."""
     IDLE_TICKS = 16 * 10 * 4
 
     def __init__(self, resync=True):
@@ -98,7 +98,7 @@ class UartInterfaceRx:
     def edge(self, rx_done_tick, rx_byte, s_tick):
         frame_timeout = (self.idle_count == self.IDLE_TICKS)
 
-        # bloque del contador de silencio
+        # idle counter block
         if rx_done_tick:
             next_idle = 0
         elif s_tick and self.idle_count != self.IDLE_TICKS:
@@ -106,7 +106,7 @@ class UartInterfaceRx:
         else:
             next_idle = self.idle_count
 
-        # bloque de ensamblado
+        # frame assembly block
         if self.resync and frame_timeout and self.rx_count != 0:
             self.rx_count = 0
             self.timeouts += 1
@@ -136,7 +136,7 @@ class Sim:
             self.iface.edge(done, byte, tick)
 
     def send_byte(self, value):
-        """Emite un byte a baudaje nominal: start, 8 bits LSB primero, stop."""
+        """Sends a byte at nominal baud: start, 8 bits LSB first, stop."""
         bits = [0] + [(value >> i) & 1 for i in range(8)] + [1]
         for bit in bits:
             self.line = bit
@@ -161,8 +161,8 @@ def check(name, cond, detail=""):
     print(("  PASS  " if cond else "  FAIL  ")+name+("" if cond else f"  {detail}"))
     if not cond: fails.append(name)
 
-# Umbral = 640 ticks = 40 tiempos de bit = 4 bytes.
-# Los huecos reales entre tramas son >=10ms = ~96 tiempos de bit.
+# Threshold = 640 ticks = 40 bit times = 4 bytes.
+# The real gaps between frames are >=10ms = ~96 bit times.
 GAP_REAL = 96
 
 print("=== 1. Recepcion normal con huecos reales (10ms) ===")
@@ -175,7 +175,7 @@ check("el reencuadre no rompe nada (rx_count queda en 0)", s.iface.rx_count==0)
 
 print("\n=== 2. Umbral: 30 tiempos de bit NO reencuadra, 50 SI ===")
 s = Sim()
-for b in [0x20,0x00]: s.send_byte(b)     # trama a medias
+for b in [0x20,0x00]: s.send_byte(b)     # half built frame
 s.idle(30)
 check("hueco de 30 bits: no reencuadra", s.iface.timeouts==0, f"-> {s.iface.timeouts}")
 s.idle(30)                                # acumulado 60 > 40

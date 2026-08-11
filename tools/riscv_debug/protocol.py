@@ -1,18 +1,18 @@
 """
-Protocolo UART del debug_unit — tramas de 5 bytes.
+UART protocol of the debug_unit - 5 byte frames.
 
-Formato (idéntico en ambos sentidos):
+Format (the same in both directions):
 
-    byte 0   : comando / código de respuesta
-    bytes 1-4: payload de 32 bits, big-endian (MSB primero)
+    byte 0   : command / response code
+    bytes 1-4: 32-bit payload, big-endian (MSB first)
 
-El orden big-endian sale de uart_interface.v: en RX el buffer desplaza cada byte
-recibido hacia la derecha (`rx_buffer <= {rx_buffer[31:0], rx_byte}`), así que el
-primer byte queda en rx_data[39:32] = cmd; en TX se envía primero
-`tx_buffer[39:32]`. O sea: comando primero, payload MSB primero.
+The big-endian order comes from uart_interface.v: on RX the buffer shifts every
+received byte to the right (`rx_buffer <= {rx_buffer[31:0], rx_byte}`), so the
+first byte ends up in rx_data[39:32] = cmd; on TX `tx_buffer[39:32]` is sent
+first. That is: command first, payload MSB first.
 
-IMPORTANTE: los opcodes de acá salen de leer debug_unit.v directamente, no del
-enunciado del TP (que tiene STEP y RUN invertidos y REQ_REG en 0x03).
+IMPORTANT: the opcodes here come from reading debug_unit.v directly, not from
+the TP statement (which has STEP and RUN swapped and REQ_REG at 0x03).
 """
 
 from __future__ import annotations
@@ -21,32 +21,32 @@ import struct
 from dataclasses import dataclass
 from enum import IntEnum
 
-#: Tamaño de trama en bytes (1 comando + 4 de payload).
+#: Frame size in bytes (1 command + 4 of payload).
 FRAME_SIZE = 5
 
-#: 1 byte sin signo + 1 entero de 32 bits big-endian.
+#: 1 unsigned byte + 1 big-endian 32-bit integer.
 _FRAME = struct.Struct(">BI")
 
 
 class Command(IntEnum):
-    """Comandos que la PC le manda a la FPGA (debug_unit.v, estado IDLE)."""
+    """Commands the PC sends to the FPGA (debug_unit.v, IDLE state)."""
 
-    STEP = 0x01        # avanza exactamente un ciclo de reloj
-    RUN = 0x02         # ejecución libre hasta que cpu_halted se active
-    RESET = 0x03       # reinicia la CPU y el puntero de carga de instrucciones
-    LOAD_INSTR = 0x10  # escribe el payload como instrucción y autoincrementa
-    REQ_REG = 0x20     # payload[4:0] = número de registro
-    REQ_MEM = 0x30     # payload = dirección de memoria de datos
-    REQ_PC = 0x40      # sin payload
-    REQ_LATCH = 0x50   # payload[7:0] = id de latch del pipeline
+    STEP = 0x01        # advances exactly one clock cycle
+    RUN = 0x02         # free run until cpu_halted goes active
+    RESET = 0x03       # restarts the CPU and the instruction load pointer
+    LOAD_INSTR = 0x10  # writes the payload as an instruction and auto-increments
+    REQ_REG = 0x20     # payload[4:0] = register number
+    REQ_MEM = 0x30     # payload = data memory address
+    REQ_PC = 0x40      # no payload
+    REQ_LATCH = 0x50   # payload[7:0] = pipeline latch id
 
 
 class ResponseKind(IntEnum):
     """
-    Códigos con que responde la FPGA.
+    Codes the FPGA answers with.
 
-    Para REQ_REG el debug_unit devuelve como código el propio número de registro
-    (0x00..0x1F), así que el rango bajo no es una constante sino un registro.
+    For REQ_REG the debug_unit returns the register number itself as the code
+    (0x00..0x1F), so the low range is not a constant but a register.
     """
 
     PC = 0x20
@@ -54,15 +54,15 @@ class ResponseKind(IntEnum):
     MEM = 0x40
 
 
-#: Código de respuesta máximo que corresponde a un registro (x0..x31).
+#: Highest response code that stands for a register (x0..x31).
 MAX_REGISTER_CODE = 0x1F
 
-#: Comandos que NO generan respuesta: el debug_unit los ejecuta y vuelve a IDLE.
+#: Commands that do NOT answer: the debug_unit runs them and goes back to IDLE.
 ACTION_COMMANDS = frozenset(
     {Command.STEP, Command.RUN, Command.RESET, Command.LOAD_INSTR}
 )
 
-#: Nombres ABI de los 32 registros, para mostrarlos junto al número.
+#: ABI names of the 32 registers, to show them next to the number.
 ABI_NAMES: tuple[str, ...] = (
     "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
     "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
@@ -74,19 +74,19 @@ REGISTER_COUNT = 32
 
 
 class ProtocolError(Exception):
-    """Trama mal formada o respuesta que no corresponde a lo pedido."""
+    """Malformed frame, or an answer that does not match what was asked."""
 
 
 @dataclass(frozen=True, slots=True)
 class Frame:
-    """Una trama decodificada."""
+    """A decoded frame."""
 
     code: int
     payload: int
 
     @property
     def is_register(self) -> bool:
-        """True si la respuesta es el valor de un registro (código = x0..x31)."""
+        """True if the answer is a register value (code = x0..x31)."""
         return self.code <= MAX_REGISTER_CODE
 
     def __str__(self) -> str:
@@ -101,16 +101,16 @@ class Frame:
 
 def encode(command: int, payload: int = 0) -> bytes:
     """
-    Arma una trama de 5 bytes lista para mandar por el puerto serie.
+    Builds a 5 byte frame ready to send over the serial port.
 
-    El payload se enmascara a 32 bits para que un valor negativo o demasiado
-    grande no rompa el empaquetado.
+    The payload is masked to 32 bits so a negative or too large value does not
+    break the packing.
     """
     return _FRAME.pack(int(command) & 0xFF, int(payload) & 0xFFFFFFFF)
 
 
 def decode(raw: bytes) -> Frame:
-    """Decodifica una trama de 5 bytes recibida desde la FPGA."""
+    """Decodes a 5 byte frame received from the FPGA."""
     if len(raw) != FRAME_SIZE:
         raise ProtocolError(
             f"Se esperaban {FRAME_SIZE} bytes y llegaron {len(raw)}: {raw!r}"
@@ -120,10 +120,10 @@ def decode(raw: bytes) -> Frame:
 
 
 def register_name(number: int) -> str:
-    """Devuelve 'x5 (t0)' para el registro 5."""
+    """Returns 'x5 (t0)' for register 5."""
     return f"x{number} ({ABI_NAMES[number]})"
 
 
 def to_signed(value: int) -> int:
-    """Reinterpreta un valor de 32 bits sin signo como complemento a dos."""
+    """Reinterprets an unsigned 32-bit value as two's complement."""
     return value - 0x100000000 if value & 0x80000000 else value

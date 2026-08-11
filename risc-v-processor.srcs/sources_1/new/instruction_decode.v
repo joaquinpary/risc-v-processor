@@ -21,14 +21,40 @@ module instruction_decode(
     output wire [31:0]  imm_gen_o,
     output wire [2:0]   funct3_o,
     output wire         bit30_o,
-    output wire [4:0]   rd_o
+    output wire [4:0]   rd_o,
+    output wire [4:0]   rs1_o,
+    output wire [4:0]   rs2_o
     );
 
-    wire [4:0] rs1_addr = instruction_i[19:15];
-    wire [4:0] rs2_addr = instruction_i[24:20];
     wire [6:0] opcode   = instruction_i[6:0];
     wire [2:0] funct3   = instruction_i[14:12];
     wire       bit30    = instruction_i[30];
+
+    // -------------------------------------------------------------------
+    // Effective source registers
+    //
+    // Not every format uses these fields as a register: in lui and jal the
+    // bits 19:15 and 24:20 are part of the immediate, and in the I-type
+    // formats the rs2 field is too. Treating them as registers would cause
+    // two bad things:
+    //   - lui would read a random register and add it to its immediate,
+    //   - the forwarding unit could forward a value onto those bits.
+    // That is why they are forced to x0 when they are not a real register, and
+    // exported so top.v uses exactly the same ones for forwarding and for
+    // hazard detection.
+    // -------------------------------------------------------------------
+    wire uses_rs1 = (opcode != 7'b0110111)   // lui
+                 && (opcode != 7'b1101111);  // jal
+
+    wire uses_rs2 = (opcode == 7'b0110011)   // R-type
+                 || (opcode == 7'b0100011)   // stores
+                 || (opcode == 7'b1100011);  // branches
+
+    wire [4:0] rs1_addr = uses_rs1 ? instruction_i[19:15] : 5'd0;
+    wire [4:0] rs2_addr = uses_rs2 ? instruction_i[24:20] : 5'd0;
+
+    assign rs1_o = rs1_addr;
+    assign rs2_o = rs2_addr;
 
     assign pc_o = pc_i;
     assign pc_plus_4_o = pc_plus_4_i;

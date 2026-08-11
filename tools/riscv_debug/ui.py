@@ -1,4 +1,4 @@
-"""Renderizado del dashboard con rich. Sin E/S: solo transforma estado en vistas."""
+"""Dashboard rendering with rich. No I/O: it only turns state into views."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from rich.text import Text
 
 from .protocol import ABI_NAMES, REGISTER_COUNT, to_signed
 
-#: Filas de la tabla de registros: 32 registros en 2 columnas.
+#: Rows of the register table: 32 registers in 2 columns.
 ROWS = REGISTER_COUNT // 2
 
 
 @dataclass
 class CpuState:
-    """Última foto conocida del procesador."""
+    """Last known snapshot of the processor."""
 
     port: str = "-"
     baudrate: int = 9600
@@ -28,18 +28,18 @@ class CpuState:
     registers: list[int | None] = field(
         default_factory=lambda: [None] * REGISTER_COUNT
     )
-    #: Registros que cambiaron respecto de la lectura anterior (se resaltan).
+    #: Registers that changed since the previous read (they get highlighted).
     changed: set[int] = field(default_factory=set)
 
     cycles: int = 0
     status: str = "Sin conectar"
     last_error: str | None = None
-    #: Último programa cargado, para mostrarlo en el panel de estado.
+    #: Last loaded program, to show it in the status panel.
     program_name: str | None = None
     program_size: int = 0
 
     def begin_refresh(self) -> None:
-        """Arranca una lectura nueva: guarda los valores viejos para comparar."""
+        """Starts a new read: keeps the old values so they can be compared."""
         self._previous = list(self.registers)
         self.changed = set()
 
@@ -57,14 +57,14 @@ class CpuState:
 
 
 def _format_word(value: int | None) -> tuple[str, str]:
-    """Devuelve (hexadecimal, decimal con signo) listos para mostrar."""
+    """Returns (hexadecimal, signed decimal) ready to display."""
     if value is None:
         return "--------", "-"
     return f"{value:08X}", str(to_signed(value))
 
 
 def render_status(state: CpuState) -> Panel:
-    """Panel superior: conexión, PC y contador de ciclos."""
+    """Top panel: connection, PC and cycle counter."""
     table = Table.grid(padding=(0, 2))
     table.add_column(justify="right", style="dim")
     table.add_column()
@@ -106,10 +106,10 @@ def render_status(state: CpuState) -> Panel:
 
 def render_registers(state: CpuState) -> Panel:
     """
-    Tabla de los 32 registros en 2 columnas de 16 filas.
+    Table of the 32 registers in 2 columns of 16 rows.
 
-    La columna izquierda lleva x0..x15 y la derecha x16..x31. Los registros que
-    cambiaron desde el paso anterior se resaltan en amarillo.
+    The left column holds x0..x15 and the right one x16..x31. The registers
+    that changed since the previous step are highlighted in yellow.
     """
     table = Table(
         show_header=True,
@@ -137,7 +137,7 @@ def render_registers(state: CpuState) -> Panel:
                 if highlight
                 else ("dim" if state.registers[number] is None else "green")
             )
-            # x0 siempre vale cero por hardware: lo mostramos apagado.
+            # x0 is always zero by hardware: we show it dimmed.
             if number == 0:
                 value_style = "dim"
 
@@ -158,7 +158,7 @@ def render_registers(state: CpuState) -> Panel:
 
 
 def render_menu() -> Panel:
-    """Panel inferior con las opciones disponibles."""
+    """Bottom panel with the available options."""
     table = Table.grid(padding=(0, 3))
     table.add_column()
     table.add_column()
@@ -179,7 +179,7 @@ def render_menu() -> Panel:
 
 
 def render_dashboard(state: CpuState, show_menu: bool = True) -> RenderableType:
-    """Arma el dashboard completo."""
+    """Builds the complete dashboard."""
     parts: list[RenderableType] = [render_status(state), render_registers(state)]
     if show_menu:
         parts.append(render_menu())

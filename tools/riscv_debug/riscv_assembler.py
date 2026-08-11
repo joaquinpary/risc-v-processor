@@ -1,23 +1,22 @@
 """
-Ensamblador RV32I mínimo para el TP.
+Minimal RV32I assembler for the TP.
 
-Convierte texto en ensamblador (o un `.hex`) a palabras de 32 bits listas para
-mandarle a la FPGA por UART.
+Turns assembly text (or a `.hex`) into 32-bit words ready to send to the FPGA
+over UART.
 
-Uso rápido:
+Quick usage:
 
     from riscv_debug.riscv_assembler import assemble, load_file
 
     prog = assemble("addi x1, x0, 42\\nadd x2, x1, x1\\n")
     prog.words        # [0x02A00093, 0x001080B3]
 
-    prog = load_file("test.s")     # detecta .s/.asm vs .hex por extension
+    prog = load_file("test.s")     # picks .s/.asm vs .hex by extension
 
-Además de ensamblar, avisa cuáles instrucciones —aun estando bien codificadas—
-NO las ejecuta correctamente ESTE procesador (ver CPU_UNSUPPORTED abajo): la ALU
-del TP sólo implementa AND/OR/ADD/SUB.
+Besides assembling, it warns which instructions -even when encoded correctly-
+THIS processor does NOT run properly (see CPU_UNSUPPORTED below).
 
-Autotest: `python -m riscv_debug.riscv_assembler`
+Self test: `python -m riscv_debug.riscv_assembler`
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # =====================================================================
-# Registros
+# Registers
 # =====================================================================
 
 ABI_NAMES = (
@@ -37,15 +36,15 @@ ABI_NAMES = (
     "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6",
 )
 
-#: Nombre -> número. Acepta xN, los nombres ABI, y "fp" como alias de s0/x8.
+#: Name -> number. Accepts xN, the ABI names, and "fp" as an alias of s0/x8.
 REGISTERS: dict[str, int] = {f"x{i}": i for i in range(32)}
 REGISTERS.update({name: i for i, name in enumerate(ABI_NAMES)})
 REGISTERS["fp"] = 8
 
 # =====================================================================
-# Tabla de instrucciones
+# Instruction table
 # =====================================================================
-# formato: (tipo, opcode, funct3, funct7)
+# format: (type, opcode, funct3, funct7)
 
 R_TYPE = {
     "add":  (0b0110011, 0b000, 0b0000000),
@@ -69,8 +68,8 @@ I_ARITH = {
     "andi":  (0b0010011, 0b111),
 }
 
-#: Desplazamientos inmediatos: el "inmediato" es un shamt de 5 bits y los
-#: 7 bits altos codifican la variante (lógico/aritmético).
+#: Immediate shifts: the "immediate" is a 5 bit shamt and the top 7 bits
+#: encode the variant (logical/arithmetic).
 I_SHIFT = {
     "slli": (0b0010011, 0b001, 0b0000000),
     "srli": (0b0010011, 0b101, 0b0000000),
@@ -109,56 +108,33 @@ U_TYPE = {
 
 J_TYPE = {"jal": 0b1101111}
 
-#: Pseudo-instrucciones y cuántas instrucciones reales ocupan.
-#: (`li` es 1 o 2 según el valor, se calcula aparte.)
+#: Pseudo-instructions and how many real instructions they take.
+#: (`li` is 1 or 2 depending on the value, computed apart.)
 PSEUDO_SIZE = {"nop": 1, "mv": 1, "j": 1, "jr": 1, "ret": 1, "li": None}
 
 # =====================================================================
-# Qué soporta REALMENTE este procesador
+# What this processor REALLY supports
 # =====================================================================
-# La ALU del TP (alu.v) implementa sólo AND/OR/ADD/SUB, y alu_control.v manda
-# todo lo que no reconoce al caso `default` (AND). Estas instrucciones se
-# codifican bien pero la FPGA las ejecuta mal: conviene avisarlo antes de que
-# el alumno pierda una tarde depurando el hardware equivocado.
+# The 32 instructions the TP asks for are already implemented. What is left
+# here are the ones the assembler can encode but the processor does not run
+# yet, so nobody loses an afternoon debugging the wrong hardware.
 
 CPU_UNSUPPORTED: dict[str, str] = {
-    "sll":   "la ALU no implementa desplazamientos (alu_control lo manda a AND)",
-    "srl":   "la ALU no implementa desplazamientos (alu_control lo manda a AND)",
-    "sra":   "la ALU no implementa desplazamientos (alu_control lo manda a AND)",
-    "slt":   "la ALU no implementa comparaciones (alu_control lo manda a AND)",
-    "sltu":  "la ALU no implementa comparaciones (alu_control lo manda a AND)",
-    "xor":   "la ALU no implementa XOR (alu_control lo manda a AND)",
-    "slli":  "la ALU no implementa desplazamientos",
-    "srli":  "la ALU no implementa desplazamientos",
-    "srai":  "la ALU no implementa desplazamientos",
-    "slti":  "la ALU no implementa comparaciones",
-    "sltiu": "la ALU no implementa comparaciones",
-    "xori":  "la ALU no implementa XOR",
-    "lui":   "control.v le pone ALUSrc=1 y suma rs1, pero lui no tiene rs1: da basura",
-    "auipc": "no esta en la tabla de control.v",
-    "bne":   "memory.v resuelve el salto con (branch & zero): solo funciona BEQ",
-    "blt":   "no implementado: la condicion de salto solo mira el flag zero",
-    "bge":   "no implementado: la condicion de salto solo mira el flag zero",
-    "bltu":  "no implementado: la condicion de salto solo mira el flag zero",
-    "bgeu":  "no implementado: la condicion de salto solo mira el flag zero",
-    "sb":    "el byte_write_en de memory.v no desplaza segun el offset",
-    "sh":    "el byte_write_en de memory.v no desplaza segun el offset",
-    "lb":    "memory.v no extrae ni extiende el sub-word leido",
-    "lh":    "memory.v no extrae ni extiende el sub-word leido",
-    "lbu":   "memory.v no extrae el sub-word leido",
-    "lhu":   "memory.v no extrae el sub-word leido",
-    "jal":   "el destino usa pc+imm con el inmediato desplazado de mas (ver docs/control-hazards.md)",
-    "jalr":  "el destino deberia ser rs1+imm, pero se calcula pc+imm",
+    "auipc": "no esta en la tabla de opcodes de control.v",
+    "blt":   "la condicion de salto solo decodifica beq y bne",
+    "bge":   "la condicion de salto solo decodifica beq y bne",
+    "bltu":  "la condicion de salto solo decodifica beq y bne",
+    "bgeu":  "la condicion de salto solo decodifica beq y bne",
 }
 
 
 # =====================================================================
-# Errores y resultado
+# Errors and result
 # =====================================================================
 
 
 class AssemblerError(Exception):
-    """Error de sintaxis o de rango, siempre con número de línea."""
+    """Syntax or range error, always with a line number."""
 
     def __init__(self, message: str, line_number: int | None = None,
                  source: str | None = None):
@@ -173,20 +149,20 @@ class AssemblerError(Exception):
 
 @dataclass
 class Program:
-    """Resultado del ensamblado."""
+    """Result of the assembly."""
 
     words: list[int] = field(default_factory=list)
-    #: Índice de palabra -> texto fuente, para mostrarlo en el dashboard.
+    #: Word index -> source text, to show it in the dashboard.
     listing: list[tuple[int, int, str]] = field(default_factory=list)
     labels: dict[str, int] = field(default_factory=dict)
-    #: Avisos de instrucciones que esta CPU no ejecuta bien.
+    #: Warnings about instructions this CPU does not run properly.
     warnings: list[str] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.words)
 
     def to_bytes(self, byteorder: str = "big") -> bytes:
-        """Serializa el programa completo (big-endian por defecto, como el protocolo)."""
+        """Serializes the whole program (big-endian by default, like the protocol)."""
         return b"".join(w.to_bytes(4, byteorder) for w in self.words)
 
     def to_hex_lines(self) -> list[str]:
@@ -194,7 +170,7 @@ class Program:
 
 
 # =====================================================================
-# Utilidades de parseo
+# Parsing helpers
 # =====================================================================
 
 _COMMENT = re.compile(r"[#;].*$")
@@ -203,12 +179,12 @@ _MEM_OPERAND = re.compile(r"^\s*(-?(?:0[xX])?[0-9A-Fa-f]+)?\s*\(\s*([A-Za-z0-9]+
 
 
 def strip_comment(line: str) -> str:
-    """Saca comentarios (`#` o `;`) y espacios sobrantes."""
+    """Strips comments (`#` or `;`) and extra spaces."""
     return _COMMENT.sub("", line).strip()
 
 
 def parse_register(token: str, line_number: int, source: str) -> int:
-    """Acepta `x5`, `t0`, `sp`, `fp`... y devuelve el número de registro."""
+    """Accepts `x5`, `t0`, `sp`, `fp`... and returns the register number."""
     name = token.strip().lower()
     if name not in REGISTERS:
         raise AssemblerError(f"registro desconocido: {token!r}", line_number, source)
@@ -217,7 +193,7 @@ def parse_register(token: str, line_number: int, source: str) -> int:
 
 def parse_immediate(token: str, line_number: int, source: str) -> int:
     """
-    Acepta decimal (`42`, `-10`), hexadecimal (`0x2A`, `-0x10`) y binario (`0b1010`).
+    Accepts decimal (`42`, `-10`), hex (`0x2A`, `-0x10`) and binary (`0b1010`).
     """
     text = token.strip()
     negative = text.startswith("-")
@@ -240,7 +216,7 @@ def parse_immediate(token: str, line_number: int, source: str) -> int:
 
 def check_range(value: int, bits: int, name: str, line_number: int,
                 source: str, signed: bool = True) -> None:
-    """Valida que un inmediato entre en la cantidad de bits del formato."""
+    """Checks that an immediate fits in the bit count of the format."""
     if signed:
         low, high = -(1 << (bits - 1)), (1 << (bits - 1)) - 1
     else:
@@ -258,9 +234,9 @@ def split_operands(text: str) -> list[str]:
 
 def parse_mem_operand(token: str, line_number: int, source: str) -> tuple[int, int]:
     """
-    Parsea `offset(base)` -> (offset, nº de registro base).
+    Parses `offset(base)` -> (offset, base register number).
 
-    Acepta también `(x2)` (offset implícito 0) y `4 (x2)` con espacios.
+    It also accepts `(x2)` (implicit offset 0) and `4 (x2)` with spaces.
     """
     match = _MEM_OPERAND.match(token)
     if not match:
@@ -274,7 +250,7 @@ def parse_mem_operand(token: str, line_number: int, source: str) -> tuple[int, i
 
 
 # =====================================================================
-# Codificadores por formato
+# Encoders per format
 # =====================================================================
 
 
@@ -295,7 +271,7 @@ def encode_s(opcode: int, funct3: int, rs1: int, rs2: int, imm: int) -> int:
 
 
 def encode_b(opcode: int, funct3: int, rs1: int, rs2: int, imm: int) -> int:
-    """El inmediato de branch es par y se guarda en bits salteados."""
+    """The branch immediate is even and is stored in scattered bits."""
     imm &= 0x1FFF
     return (((imm >> 12) & 0x1) << 31 | ((imm >> 5) & 0x3F) << 25
             | (rs2 & 0x1F) << 20 | (rs1 & 0x1F) << 15 | (funct3 & 0x7) << 12
@@ -307,7 +283,7 @@ def encode_u(opcode: int, rd: int, imm: int) -> int:
 
 
 def encode_j(opcode: int, rd: int, imm: int) -> int:
-    """El inmediato de jal es par y se guarda en bits salteados."""
+    """The jal immediate is even and is stored in scattered bits."""
     imm &= 0x1FFFFF
     return (((imm >> 20) & 0x1) << 31 | ((imm >> 1) & 0x3FF) << 21
             | ((imm >> 11) & 0x1) << 20 | ((imm >> 12) & 0xFF) << 12
@@ -315,13 +291,13 @@ def encode_j(opcode: int, rd: int, imm: int) -> int:
 
 
 # =====================================================================
-# Ensamblador
+# Assembler
 # =====================================================================
 
 
 @dataclass
 class _Line:
-    """Una línea con instrucción, ya despojada de comentarios y etiquetas."""
+    """A line with an instruction, already stripped of comments and labels."""
 
     number: int
     source: str
@@ -332,18 +308,18 @@ class _Line:
 
 def _li_parts(value: int) -> tuple[int | None, int]:
     """
-    Descompone `li rd, value` en (upper para lui, lower para addi).
+    Splits `li rd, value` into (upper for lui, lower for addi).
 
-    Si entra en 12 bits devuelve (None, value): alcanza un solo `addi`.
-    Si no, se suma 0x800 antes de partir para compensar que el `addi`
-    extiende el signo del inmediato bajo.
+    If it fits in 12 bits it returns (None, value): a single `addi` is enough.
+    If not, 0x800 is added before splitting to compensate that the `addi`
+    sign extends the low immediate.
     """
     if -2048 <= value <= 2047:
         return None, value
     unsigned = value & 0xFFFFFFFF
     upper = (unsigned + 0x800) >> 12 & 0xFFFFF
     lower = unsigned - ((upper << 12) & 0xFFFFFFFF)
-    lower = ((lower + 0x800) & 0xFFF) - 0x800     # a 12 bits con signo
+    lower = ((lower + 0x800) & 0xFFF) - 0x800     # to signed 12 bits
     return upper, lower
 
 
@@ -358,14 +334,14 @@ def _pseudo_size(mnemonic: str, operands: list[str], number: int, source: str) -
 
 def assemble(text: str, base_address: int = 0) -> Program:
     """
-    Ensambla texto RISC-V y devuelve un Program.
+    Assembles RISC-V text and returns a Program.
 
-    Dos pasadas: la primera recolecta etiquetas con su dirección, la segunda
-    codifica resolviendo los saltos.
+    Two passes: the first collects labels with their address, the second
+    encodes resolving the branches.
     """
     program = Program()
 
-    # ---------------- Pasada 1: etiquetas y direcciones ----------------
+    # ---------------- Pass 1: labels and addresses ----------------
     lines: list[_Line] = []
     address = base_address
 
@@ -374,7 +350,7 @@ def assemble(text: str, base_address: int = 0) -> Program:
         if not stripped:
             continue
 
-        # Puede haber varias etiquetas antes de la instrucción, o etiqueta sola
+        # There can be several labels before the instruction, or a lone label
         while True:
             match = _LABEL_DEF.match(stripped)
             if not match:
@@ -389,7 +365,7 @@ def assemble(text: str, base_address: int = 0) -> Program:
         if not stripped:
             continue
 
-        # Directivas de ensamblador: se ignoran con aviso
+        # Assembler directives: ignored with a warning
         if stripped.startswith("."):
             program.warnings.append(
                 f"linea {number}: directiva ignorada: {stripped.split()[0]}"
@@ -410,7 +386,7 @@ def assemble(text: str, base_address: int = 0) -> Program:
         lines.append(_Line(number, raw, mnemonic, operands, address))
         address += 4 * size
 
-    # ---------------- Pasada 2: codificación ----------------
+    # ---------------- Pass 2: encoding ----------------
     seen_unsupported: set[str] = set()
 
     for line in lines:
@@ -439,10 +415,11 @@ def _is_known(mnemonic: str) -> bool:
 def _resolve_target(token: str, labels: dict[str, int], current: int,
                     number: int, source: str) -> int:
     """
-    Un destino de salto puede ser una etiqueta o un offset numérico.
+    A branch target can be a label or a numeric offset.
 
-    Con etiqueta se calcula relativo al PC de la instrucción actual; con número
-    se toma tal cual como offset (que es lo que espera el enunciado del TP).
+    With a label it is computed relative to the PC of the current instruction;
+    with a number it is taken as the offset itself (which is what the TP
+    statement expects).
     """
     if token in labels:
         return labels[token] - current
@@ -452,7 +429,7 @@ def _resolve_target(token: str, labels: dict[str, int], current: int,
 
 
 def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
-    """Codifica una línea; devuelve 1 palabra (o 2 para `li` grande)."""
+    """Encodes one line; returns 1 word (or 2 for a large `li`)."""
     m, ops, n, src = line.mnemonic, line.operands, line.number, line.source
 
     def reg(index: int) -> int:
@@ -464,7 +441,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
                 f"{m} espera {count} operandos ({form}), recibi {len(ops)}", n, src
             )
 
-    # -------- pseudo-instrucciones --------
+    # -------- pseudo-instructions --------
     if m == "nop":
         return [encode_i(0b0010011, 0b000, 0, 0, 0)]           # addi x0, x0, 0
     if m == "mv":
@@ -493,13 +470,13 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
             encode_i(0b0010011, 0b000, rd, rd, lower),           # addi rd, rd, lower
         ]
 
-    # -------- Tipo R --------
+    # -------- R-type --------
     if m in R_TYPE:
         need(3, f"{m} rd, rs1, rs2")
         opcode, funct3, funct7 = R_TYPE[m]
         return [encode_r(opcode, funct3, funct7, reg(0), reg(1), reg(2))]
 
-    # -------- Tipo I aritmético --------
+    # -------- Arithmetic I-type --------
     if m in I_ARITH:
         need(3, f"{m} rd, rs1, imm")
         opcode, funct3 = I_ARITH[m]
@@ -507,7 +484,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         check_range(imm, 12, f"inmediato de {m}", n, src)
         return [encode_i(opcode, funct3, reg(0), reg(1), imm)]
 
-    # -------- Tipo I desplazamiento --------
+    # -------- Shift I-type --------
     if m in I_SHIFT:
         need(3, f"{m} rd, rs1, shamt")
         opcode, funct3, funct7 = I_SHIFT[m]
@@ -515,7 +492,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         check_range(shamt, 5, f"shamt de {m}", n, src, signed=False)
         return [encode_i(opcode, funct3, reg(0), reg(1), (funct7 << 5) | shamt)]
 
-    # -------- Tipo I carga / jalr --------
+    # -------- Load I-type / jalr --------
     if m in I_LOAD or m in I_JALR:
         opcode, funct3 = (I_LOAD | I_JALR)[m]
         if len(ops) == 2:                       # lw x5, 4(x2)  /  jalr x1, 0(x2)
@@ -529,7 +506,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         check_range(imm, 12, f"offset de {m}", n, src)
         return [encode_i(opcode, funct3, reg(0), rs1, imm)]
 
-    # -------- Tipo S --------
+    # -------- S-type --------
     if m in S_TYPE:
         need(2, f"{m} rs2, offset(base)")
         opcode, funct3 = S_TYPE[m]
@@ -537,7 +514,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         check_range(imm, 12, f"offset de {m}", n, src)
         return [encode_s(opcode, funct3, rs1, reg(0), imm)]
 
-    # -------- Tipo B --------
+    # -------- B-type --------
     if m in B_TYPE:
         need(3, f"{m} rs1, rs2, destino")
         opcode, funct3 = B_TYPE[m]
@@ -547,14 +524,14 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         check_range(offset, 13, f"offset de {m}", n, src)
         return [encode_b(opcode, funct3, reg(0), reg(1), offset)]
 
-    # -------- Tipo U --------
+    # -------- U-type --------
     if m in U_TYPE:
         need(2, f"{m} rd, imm20")
         imm = parse_immediate(ops[1], n, src)
         check_range(imm, 20, f"inmediato de {m}", n, src, signed=False)
         return [encode_u(U_TYPE[m], reg(0), imm)]
 
-    # -------- Tipo J --------
+    # -------- J-type --------
     if m in J_TYPE:
         need(2, f"{m} rd, destino")
         offset = _resolve_target(ops[1], labels, line.address, n, src)
@@ -567,15 +544,15 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
 
 
 # =====================================================================
-# Lectura de archivos
+# File reading
 # =====================================================================
 
 
 def parse_hex(text: str) -> Program:
     """
-    Lee un `.hex`: una palabra por línea, 8 dígitos hexadecimales.
+    Reads a `.hex`: one word per line, 8 hexadecimal digits.
 
-    Tolera el prefijo `0x`, guiones bajos, comentarios y líneas en blanco.
+    It tolerates the `0x` prefix, underscores, comments and blank lines.
     """
     program = Program()
     for number, raw in enumerate(text.splitlines(), start=1):
@@ -596,7 +573,7 @@ def parse_hex(text: str) -> Program:
 
 
 def load_file(path: str | Path) -> Program:
-    """Carga `.hex` o ensamblador según la extensión."""
+    """Loads `.hex` or assembly depending on the extension."""
     file_path = Path(path)
     if not file_path.exists():
         raise AssemblerError(f"no existe el archivo: {file_path}")
@@ -607,13 +584,13 @@ def load_file(path: str | Path) -> Program:
 
 
 # =====================================================================
-# Autotest
+# Self test
 # =====================================================================
 
 
 def _run_self_test() -> int:
-    """Pruebas rápidas. Los vectores de referencia salen del programa de prueba
-    del TP (dashboard.py), que ya se verifico corriendo en la FPGA."""
+    """Quick tests. The reference vectors come from the TP test program
+    (dashboard.py), already verified running on the FPGA."""
     failures: list[str] = []
 
     def check(name: str, got, expected) -> None:
@@ -674,7 +651,7 @@ def _run_self_test() -> int:
 
     print("\n=== Etiquetas ===")
     prog = assemble("""
-        # suma hasta que t0 valga 0
+        # add until t0 is 0
         addi t0, zero, 3
     LOOP:
         addi t1, t1, 1
@@ -687,9 +664,9 @@ def _run_self_test() -> int:
     check("etiquetas: 6 instrucciones", len(prog), 6)
     check("LOOP en 0x04", prog.labels["LOOP"], 4)
     check("FIN en 0x14", prog.labels["FIN"], 20)
-    # beq t0, zero, FIN esta en 0x0C y salta a 0x14 -> offset +8
+    # beq t0, zero, FIN is at 0x0C and jumps to 0x14 -> offset +8
     check("salto hacia adelante (+8)", prog.words[3], 0x00028463)
-    # beq zero,zero,LOOP esta en 0x10 y salta a 0x04 -> offset -12
+    # beq zero,zero,LOOP is at 0x10 and jumps to 0x04 -> offset -12
     check("salto hacia atras (-12)", prog.words[4], 0xFE000AE3)
 
     print("\n=== li (1 y 2 instrucciones) ===")
@@ -725,9 +702,12 @@ def _run_self_test() -> int:
             check(f"rechaza {source!r}", fragment in str(exc), True)
 
     print("\n=== Avisos de lo que esta CPU no ejecuta ===")
-    warned = assemble("sll x1, x2, x3\nbne x1, x2, 8\nlui x1, 1")
-    check("avisa sll/bne/lui", len(warned.warnings), 3)
-    check("no avisa de add/addi", len(assemble("add x1,x2,x3\naddi x1,x0,1").warnings), 0)
+    check("avisa de blt/bgeu (sin implementar)",
+          len(assemble("blt x1, x2, 8\nbgeu x1, x2, 8").warnings), 2)
+    supported = ("add x1,x2,x3\nsll x1,x2,x3\nslt x1,x2,x3\nxor x1,x2,x3\n"
+                 "srai x1,x2,3\nlui x1,1\nbne x1,x2,8\njal x1,8\n"
+                 "jalr x1,0(x2)\nlb x1,1(x2)\nsh x1,2(x2)\n")
+    check("no avisa de las 32 del TP", len(assemble(supported).warnings), 0)
 
     print("\n" + "=" * 54)
     if failures:

@@ -26,16 +26,16 @@ module uart_rx
     reg [7:0] b_current, b_next;
     reg rx_done_reg;
 
-    // Sincronizador de 2 flops para rx.
-    // rx viene directo del pin y es asincronico al reloj: muestrearlo sin
-    // sincronizar vuelve metaestable al flip-flop que lo captura cada tanto,
-    // corrompiendo un byte al azar. Un byte corrupto desalinea el protocolo
-    // de 5 bytes de forma permanente, asi que esto no es opcional.
+    // 2-flop synchronizer for rx.
+    // rx comes straight from the pin and is asynchronous to the clock:
+    // sampling it without synchronizing makes the flip-flop that captures it
+    // go metastable every now and then, corrupting a random byte. One corrupt
+    // byte misaligns the 5-byte protocol permanently, so this is not optional.
     reg rx_meta, rx_sync;
 
     always @(posedge clk) begin
         if (reset) begin
-            rx_meta <= 1'b1;    // linea en reposo = 1
+            rx_meta <= 1'b1;    // idle line = 1
             rx_sync <= 1'b1;
         end else begin
             rx_meta <= rx;
