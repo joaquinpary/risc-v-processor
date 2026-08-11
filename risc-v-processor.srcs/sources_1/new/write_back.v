@@ -13,7 +13,7 @@ module write_back(
     );
     
     reg     [31:0]  write_data;
-    wire            mem_to_reg = control_i[1:0];
+    wire    [1:0]   mem_to_reg = control_i[1:0];
     
     // MUX
     

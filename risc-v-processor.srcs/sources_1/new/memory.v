@@ -3,6 +3,7 @@
 module memory(
     input wire          clk,
     input wire          reset,
+    input wire          enable_i,
     
     input wire  [9:0]   debug_addr_i,
     input wire  [6:0]   control_i,
@@ -25,7 +26,7 @@ module memory(
     output wire [4:0]   rd_o
     );
     
-    wire    [9:0]   mem_addr = data2_i[9:0];
+    wire    [9:0]   mem_addr = result_i[9:0];
     wire            mem_write = control_i[4];
     wire            mem_read = control_i[5];
     wire            branch = control_i[6];
@@ -56,7 +57,7 @@ module memory(
         .clka(clk),
         .dina(data2_i),
         .douta(read_data_o),
-        .ena(mem_write | mem_read),
+        .ena((mem_write | mem_read) & enable_i),
         .wea(byte_write_en),
         
         .addrb(debug_addr_i),
@@ -68,7 +69,7 @@ module memory(
     );
     
     
-    assign mem_addr_o = data2_i;
+    assign mem_addr_o = result_i;
     assign control_o = control_i[2:0];
     assign pc_plus_4_o = pc_plus_4_i;
     assign result_o = result_i;
