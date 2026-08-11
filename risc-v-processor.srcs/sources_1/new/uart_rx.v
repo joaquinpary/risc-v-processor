@@ -20,12 +20,29 @@ module uart_rx
         data    = 2'b10,
         stop    = 2'b11;
     
-    reg [1:0] state_current, state_next; 
+    reg [1:0] state_current, state_next;
     reg [3:0] s_current, s_next;
     reg [2:0] n_current, n_next;
     reg [7:0] b_current, b_next;
     reg rx_done_reg;
-    
+
+    // Sincronizador de 2 flops para rx.
+    // rx viene directo del pin y es asincronico al reloj: muestrearlo sin
+    // sincronizar vuelve metaestable al flip-flop que lo captura cada tanto,
+    // corrompiendo un byte al azar. Un byte corrupto desalinea el protocolo
+    // de 5 bytes de forma permanente, asi que esto no es opcional.
+    reg rx_meta, rx_sync;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            rx_meta <= 1'b1;    // linea en reposo = 1
+            rx_sync <= 1'b1;
+        end else begin
+            rx_meta <= rx;
+            rx_sync <= rx_meta;
+        end
+    end
+
     // FSMD state & data registers
     always @(posedge clk) begin
         if (reset) begin
@@ -51,7 +68,7 @@ module uart_rx
         b_next = b_current;
         case (state_current)
             idle: begin
-                if (~rx) begin
+                if (~rx_sync) begin
                     state_next = start;
                     s_next = 0;
                 end
@@ -73,7 +90,7 @@ module uart_rx
                         s_next = 0;
                         
                         b_next = b_current >> 1;
-                        b_next[7] = rx;
+                        b_next[7] = rx_sync;
                         
                         if (n_current == (DATA_BIT-1))
                             state_next = stop;

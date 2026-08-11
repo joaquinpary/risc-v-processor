@@ -86,6 +86,39 @@ module top #(
 
     wire pipeline_reset = reset | cpu_reset;
 
+    // =========================================================================
+    // HAZARD MITIGATION
+    // =========================================================================
+    wire [1:0]  forward_a, forward_b;
+    wire        pc_write, if_id_write, control_mux;
+    wire        stall = ~pc_write;
+
+    wire [4:0]  rs1_addr_id = instruction_id[19:15];
+    wire [4:0]  rs2_addr_id = instruction_id[24:20];
+
+    reg  [4:0]  rs1_ex, rs2_ex;
+
+    hazard_detection_unit u_hazard (
+        .rs1_if_id      (rs1_addr_id),
+        .rs2_if_id      (rs2_addr_id),
+        .rd_id_ex       (rd_ex),
+        .mem_read_id_ex (control_bus_ex[5]),
+        .pc_write       (pc_write),
+        .if_id_write    (if_id_write),
+        .control_mux    (control_mux)
+    );
+
+    forwarding_unit u_forward (
+        .rs1_id_ex        (rs1_ex),
+        .rs2_id_ex        (rs2_ex),
+        .rd_ex_mem        (rd_mem),
+        .reg_write_ex_mem (control_mem[2]),
+        .rd_mem_wb        (rd_wb),
+        .reg_write_mem_wb (control_wb[2]),
+        .forward_a        (forward_a),
+        .forward_b        (forward_b)
+    );
+
     // IF stage wires (outputs of instruction_fetch)
     wire    [31:0]  pc_if;
     wire    [31:0]  pc_plus_4_if;
@@ -153,8 +186,9 @@ module top #(
     wire    [4:0]   rd_o_mem;
 
     // MEM/WB latch registers
+    // (read_data has no register here: the data BRAM output register is the
+    //  MEM/WB boundary for it, see the write_back instance below)
     reg     [2:0]   control_wb;
-    reg     [31:0]  read_data_wb;
     reg     [31:0]  result_wb;
     reg     [31:0]  pc_plus_4_wb;
     reg     [4:0]   rd_wb;
@@ -163,7 +197,7 @@ module top #(
     instruction_fetch u_if (
         .clk            (clk),
         .reset          (pipeline_reset),
-        .pc_write_en_i  (cpu_enable),
+        .pc_write_en_i  (cpu_enable & pc_write),
         .pc_src_i       (pc_src_mem),
         .pc_branch_i    (pc_branch_o_mem),
         .ins_write_en_i (imem_we),
@@ -175,6 +209,28 @@ module top #(
     );
 
     assign debug_pc = pc_if;
+
+    // Skid buffer: preserves the in-flight BRAM word during a stall
+    reg  [31:0] instr_skid;
+    reg         instr_skid_valid;
+
+    always @(posedge clk) begin
+        if (pipeline_reset) begin
+            instr_skid       <= 32'b0;
+            instr_skid_valid <= 1'b0;
+        end else if (cpu_enable) begin
+            if (stall) begin
+                if (!instr_skid_valid) begin
+                    instr_skid       <= instruction_if;
+                    instr_skid_valid <= 1'b1;
+                end
+            end else begin
+                instr_skid_valid <= 1'b0;
+            end
+        end
+    end
+
+    wire [31:0] instruction_if_eff = instr_skid_valid ? instr_skid : instruction_if;
 
     // =========================================================================
     // LATCH DEBUG
@@ -210,7 +266,7 @@ module top #(
             
             // MEM/WB
             8'd22: debug_latch_data = {29'b0, control_wb}; // 3 bits
-            8'd23: debug_latch_data = read_data_wb;
+            8'd23: debug_latch_data = read_data_o_mem;  // MEM/WB read_data (BRAM output reg)
             8'd24: debug_latch_data = result_wb;
             8'd25: debug_latch_data = pc_plus_4_wb;
             8'd26: debug_latch_data = {27'b0, rd_wb}; // 5 bits
@@ -225,10 +281,10 @@ module top #(
             pc_id           <= 32'b0;
             pc_plus_4_id    <= 32'b0;
             instruction_id  <= 32'b0;
-        end else if (cpu_enable) begin
+        end else if (cpu_enable && if_id_write) begin
             pc_id           <= pc_if;
             pc_plus_4_id    <= pc_plus_4_if;
-            instruction_id  <= instruction_if;
+            instruction_id  <= instruction_if_eff;
         end
     end
 
@@ -268,28 +324,49 @@ module top #(
             funct3_ex       <= 3'b0;
             bit30_ex        <= 1'b0;
             rd_ex           <= 5'b0;
+            rs1_ex          <= 5'b0;
+            rs2_ex          <= 5'b0;
         end else if (cpu_enable) begin
             pc_ex           <= pc_o_id;
             pc_plus_4_ex    <= pc_plus_4_o_id;
             pc_branch_ex    <= pc_branch_o_ex;
-            control_bus_ex  <= control_bus_o_id;
+            control_bus_ex  <= control_mux ? 10'b0 : control_bus_o_id;
             read_data_1_ex  <= read_data_1_o_id;
             read_data_2_ex  <= read_data_2_o_id;
             imm_gen_ex      <= imm_gen_o_id;
             funct3_ex       <= funct3_o_id;
             bit30_ex        <= bit30_o_id;
             rd_ex           <= rd_o_id;
+            rs1_ex          <= rs1_addr_id;
+            rs2_ex          <= rs2_addr_id;
         end
     end
 
     // ===== EX stage =====
+    // Forwarding MUXes: select between register file, EX/MEM, or MEM/WB
+    wire [31:0] ex_mem_fwd_value = control_mem[3] ? pc_plus_4_mem : result_mem;
+
+    reg [31:0] alu_in_a_ex, alu_in_b_ex;
+    always @(*) begin
+        case (forward_a)
+            2'b10:   alu_in_a_ex = ex_mem_fwd_value;
+            2'b01:   alu_in_a_ex = reg_data_wb;
+            default: alu_in_a_ex = read_data_1_ex;
+        endcase
+        case (forward_b)
+            2'b10:   alu_in_b_ex = ex_mem_fwd_value;
+            2'b01:   alu_in_b_ex = reg_data_wb;
+            default: alu_in_b_ex = read_data_2_ex;
+        endcase
+    end
+
     execute u_ex (
         .control_i      (control_bus_ex),
         .pc_i           (pc_ex),
         .pc_plus_4_i    (pc_plus_4_ex),
         .imm_gen_i      (imm_gen_ex),
-        .rs1_data_i     (read_data_1_ex),
-        .rs2_data_i     (read_data_2_ex),
+        .rs1_data_i     (alu_in_a_ex),
+        .rs2_data_i     (alu_in_b_ex),
         .funct3_i       (funct3_ex),
         .bit30_i        (bit30_ex),
         .rd_i           (rd_ex),
@@ -330,6 +407,7 @@ module top #(
     memory u_mem (
         .clk           (clk),
         .reset         (pipeline_reset),
+        .enable_i      (cpu_enable),
         .debug_addr_i  (debug_mem_addr[9:0]),
         .control_i     (control_mem),
         .pc_plus_4_i   (pc_plus_4_mem),
@@ -354,13 +432,11 @@ module top #(
     always @(posedge clk) begin
         if (pipeline_reset) begin
             control_wb      <= 3'b0;
-            read_data_wb    <= 32'b0;
             result_wb       <= 32'b0;
             pc_plus_4_wb    <= 32'b0;
             rd_wb           <= 5'b0;
         end else if (cpu_enable) begin
             control_wb      <= control_o_mem;
-            read_data_wb    <= read_data_o_mem;
             result_wb       <= result_o_mem;
             pc_plus_4_wb    <= pc_plus_4_o_mem;
             rd_wb           <= rd_o_mem;
@@ -370,7 +446,10 @@ module top #(
     // ===== WB stage =====
     write_back u_wb (
         .control_i      (control_wb),
-        .read_data_i    (read_data_wb),
+        // The data BRAM output register (read latency 1) already acts as the
+        // MEM/WB latch for this value: adding another register here would
+        // capture it twice and deliver the loaded word one cycle late.
+        .read_data_i    (read_data_o_mem),
         .result_i       (result_wb),
         .pc_plus_4_i    (pc_plus_4_wb),
         .rd_i           (rd_wb),

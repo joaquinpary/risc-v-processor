@@ -77,6 +77,38 @@ module uart_interface #(
     reg [2:0]  rx_count;
     reg [39:0] rx_buffer;
 
+    // -----------------------------------------------------------------
+    // Reencuadre de trama por silencio
+    //
+    // Los bytes se agrupan de a 5 contando, sin ninguna marca de inicio de
+    // trama. Si alguna vez se pierde o se cuela un byte, rx_count queda
+    // corrido y TODAS las tramas siguientes se malinterpretan para siempre
+    // (peor aun: un corrimiento de 4 hace que un REQ_REG x2 se lea como el
+    // comando RUN, que deja al debug_unit sordo hasta que la CPU frene).
+    //
+    // Solucion: si pasan IDLE_TICKS sin recibir un byte, se descarta la trama
+    // parcial y se vuelve a contar desde cero. Como la PC siempre hace una
+    // pausa entre tramas, cualquier desincronizacion se cura sola.
+    //
+    // El umbral tiene que ser MAYOR a un tiempo de byte (160 ticks), porque
+    // dentro de una misma trama los bytes llegan pegados y rx_done_tick
+    // aparece recien cada 160 ticks. Usamos 4 tiempos de byte: reencuadra
+    // en ~4 ms a 9600 baudios y deja 4x de margen contra un falso positivo
+    // en medio de una trama valida.
+    // -----------------------------------------------------------------
+    localparam integer IDLE_TICKS = 16 * 10 * 4;   // 4 bytes = 640 ticks
+
+    reg [9:0] idle_count;
+
+    always @(posedge clk) begin
+        if (reset || rx_done_tick)
+            idle_count <= 10'd0;
+        else if (s_tick && idle_count != IDLE_TICKS)
+            idle_count <= idle_count + 1'b1;
+    end
+
+    wire frame_timeout = (idle_count == IDLE_TICKS);
+
     always @(posedge clk) begin
         if (reset) begin
             rx_count        <= 0;
@@ -86,7 +118,10 @@ module uart_interface #(
         end else begin
             rx_done_40b_reg <= 0;
 
-            if (rx_done_tick) begin
+            if (frame_timeout && rx_count != 0) begin
+                // Silencio largo con una trama a medias: se descarta
+                rx_count <= 0;
+            end else if (rx_done_tick) begin
                 rx_buffer <= {rx_buffer[31:0], rx_byte};
 
                 if (rx_count == 4) begin

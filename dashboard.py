@@ -1,6 +1,56 @@
 import serial
 import time
 
+
+def _sign_extend(value, bits):
+    sign_bit = 1 << (bits - 1)
+    return value - (1 << bits) if value & sign_bit else value
+
+
+def decode_instruction(instruction):
+    """Decodes the RV32I instructions used by the dashboard test."""
+    opcode = instruction & 0x7F
+    rd = (instruction >> 7) & 0x1F
+    funct3 = (instruction >> 12) & 0x07
+    rs1 = (instruction >> 15) & 0x1F
+    rs2 = (instruction >> 20) & 0x1F
+    funct7 = (instruction >> 25) & 0x7F
+
+    if instruction == 0:
+        return "nop"
+
+    if opcode == 0x13 and funct3 == 0x0:  # ADDI
+        immediate = _sign_extend((instruction >> 20) & 0xFFF, 12)
+        return f"addi x{rd}, x{rs1}, {immediate}"
+
+    if opcode == 0x33 and funct3 == 0x0:  # ADD/SUB
+        if funct7 == 0x00:
+            return f"add x{rd}, x{rs1}, x{rs2}"
+        if funct7 == 0x20:
+            return f"sub x{rd}, x{rs1}, x{rs2}"
+
+    if opcode == 0x03 and funct3 == 0x2:  # LW
+        immediate = _sign_extend((instruction >> 20) & 0xFFF, 12)
+        return f"lw x{rd}, {immediate}(x{rs1})"
+
+    if opcode == 0x23 and funct3 == 0x2:  # SW
+        immediate = ((instruction >> 25) << 5) | ((instruction >> 7) & 0x1F)
+        immediate = _sign_extend(immediate, 12)
+        return f"sw x{rs2}, {immediate}(x{rs1})"
+
+    if opcode == 0x63 and funct3 == 0x0:  # BEQ
+        immediate = (
+            (((instruction >> 31) & 0x1) << 12)
+            | (((instruction >> 7) & 0x1) << 11)
+            | (((instruction >> 25) & 0x3F) << 5)
+            | (((instruction >> 8) & 0xF) << 1)
+        )
+        immediate = _sign_extend(immediate, 13)
+        return f"beq x{rs1}, x{rs2}, {immediate:+d}"
+
+    return f".word 0x{instruction:08X}"
+
+
 class RiscVDashboard:
     def __init__(self, port='/dev/ttyUSB1', baudrate=9600):
         try:
@@ -105,19 +155,27 @@ if __name__ == '__main__':
             # 2. Load instructions (same test program)
             print("--- Loading Instructions ---")
             instructions = [
-                0x02A00093, # addi x1, x0, 42
-                0x06400113, # addi x2, x0, 100
-                0x00802183, # lw   x3, 8(x0)
-                0x00002023, # sw   x0, 0(x0)
-                0x00208233, # add  x4, x1, x2
-                0x00000463, # beq  x0, x0, +8
+                0x02A00093, # addi x1,  x0, 42
+                0x06400113, # addi x2,  x0, 100
+                0x00208233, # add  x4,  x1, x2       (RAW: x1, x2)
+                0x401202B3, # sub  x5,  x4, x1       (RAW: x4)
+                0x00428333, # add  x6,  x5, x4       (RAW: x5, x4)
+                0x00130393, # addi x7,  x6, 1        (RAW: x6)
+                0x00800413, # addi x8,  x0, 8
+                0x00802423, # sw   x8,  8(x0)       (RAW: x8)
+                0x00802483, # lw   x9,  8(x0)
+                0x00148533, # add  x10, x9, x1       (load-use: x9)
+                0x009505B3, # add  x11, x10, x9      (RAW: x10, x9)
+                0x00000463, # beq  x0,  x0, +8
                 0x00000000, # NOP (Trigger HALT)
                 0x00000000,
                 0x00000000,
                 0x00000000,
                 0x00000000
             ]
-            for inst in instructions:
+            for index, inst in enumerate(instructions):
+                asm = decode_instruction(inst)
+                print(f"[LOAD] IMEM[{index * 4:02d}] <- 0x{inst:08X}    {asm}")
                 board.load_instruction(inst)
             
             # 3. Execute
@@ -128,6 +186,13 @@ if __name__ == '__main__':
             board.query_register(1)
             board.query_register(2)
             board.query_register(4)
+            board.query_register(5)
+            board.query_register(6)
+            board.query_register(7)
+            board.query_register(8)
+            board.query_register(9)
+            board.query_register(10)
+            board.query_register(11)
             board.query_pc()
             
             # Latch IDs: 1 (IF/ID PC), 4 (ID/EX PC)
