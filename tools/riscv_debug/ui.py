@@ -32,7 +32,7 @@ class CpuState:
     changed: set[int] = field(default_factory=set)
 
     cycles: int = 0
-    status: str = "Sin conectar"
+    status: str = "Disconnected"
     last_error: str | None = None
     #: Last loaded program, to show it in the status panel.
     program_name: str | None = None
@@ -73,24 +73,24 @@ def render_status(state: CpuState) -> Panel:
     link_text = (
         f"{state.port} @ {state.baudrate} bps"
         if state.connected
-        else "desconectado"
+        else "disconnected"
     )
-    table.add_row("Enlace", Text(link_text, style=link_style))
+    table.add_row("Link", Text(link_text, style=link_style))
 
     if state.pc is None:
-        pc_text = Text("desconocido", style="dim")
+        pc_text = Text("unknown", style="dim")
     else:
         pc_text = Text(f"0x{state.pc:08X}", style="bold cyan")
-        pc_text.append(f"   (palabra {state.pc // 4})", style="dim")
+        pc_text.append(f"   (word {state.pc // 4})", style="dim")
     table.add_row("PC", pc_text)
 
-    table.add_row("Ciclos", Text(str(state.cycles), style="bold"))
-    table.add_row("Estado", Text(state.status, style="yellow"))
+    table.add_row("Cycles", Text(str(state.cycles), style="bold"))
+    table.add_row("Status", Text(state.status, style="yellow"))
 
     if state.program_name:
         table.add_row(
-            "Programa",
-            Text(f"{state.program_name}  ({state.program_size} instrucciones)",
+            "Program",
+            Text(f"{state.program_name}  ({state.program_size} instructions)",
                  style="green"),
         )
 
@@ -99,7 +99,7 @@ def render_status(state: CpuState) -> Panel:
 
     return Panel(
         table,
-        title="[bold]Procesador RISC-V[/bold]",
+        title="[bold]RISC-V Processor[/bold]",
         border_style="cyan" if state.connected else "red",
     )
 
@@ -152,7 +152,7 @@ def render_registers(state: CpuState) -> Panel:
 
     return Panel(
         Align.center(table),
-        title="[bold]Banco de registros[/bold]",
+        title="[bold]Register File[/bold]",
         border_style="magenta",
     )
 
@@ -170,12 +170,12 @@ def render_menu() -> Panel:
         Text.assemble(("3", "bold cyan"), (" Reset", "")),
     )
     table.add_row(
-        Text.assemble(("4", "bold cyan"), (" Cargar programa (.s / .hex)", "")),
-        Text.assemble(("5", "bold cyan"), (" Refrescar", "")),
-        Text.assemble(("6", "bold cyan"), (" Leer memoria", "")),
+        Text.assemble(("4", "bold cyan"), (" Load program (.s / .hex)", "")),
+        Text.assemble(("5", "bold cyan"), (" Refresh", "")),
+        Text.assemble(("6", "bold cyan"), (" Read memory", "")),
     )
-    table.add_row(Text.assemble(("q", "bold cyan"), (" Salir", "")))
-    return Panel(table, border_style="dim", title="[dim]Menú[/dim]")
+    table.add_row(Text.assemble(("q", "bold cyan"), (" Quit", "")))
+    return Panel(table, border_style="dim", title="[dim]Menu[/dim]")
 
 
 def render_dashboard(state: CpuState, show_menu: bool = True) -> RenderableType:

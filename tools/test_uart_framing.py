@@ -165,59 +165,59 @@ def check(name, cond, detail=""):
 # The real gaps between frames are >=10ms = ~96 bit times.
 GAP_REAL = 96
 
-print("=== 1. Recepcion normal con huecos reales (10ms) ===")
+print("=== 1. Normal reception with real gaps (10ms) ===")
 s = Sim()
 env=[(0x40,0),(0x20,1),(0x20,0x10),(0x10,0x02A00093)]
 for c,p in env: s.send_frame(c,p); s.idle(GAP_REAL)
-check("4 tramas exactas", s.iface.frames==[(c<<32)|p for c,p in env],
+check("4 exact frames", s.iface.frames==[(c<<32)|p for c,p in env],
       f"-> {[hex(f) for f in s.iface.frames]}")
-check("el reencuadre no rompe nada (rx_count queda en 0)", s.iface.rx_count==0)
+check("resync does not break anything (rx_count stays at 0)", s.iface.rx_count==0)
 
-print("\n=== 2. Umbral: 30 tiempos de bit NO reencuadra, 50 SI ===")
+print("\n=== 2. Threshold: 30 bit times does NOT resync, 50 DOES ===")
 s = Sim()
 for b in [0x20,0x00]: s.send_byte(b)     # half built frame
 s.idle(30)
-check("hueco de 30 bits: no reencuadra", s.iface.timeouts==0, f"-> {s.iface.timeouts}")
-s.idle(30)                                # acumulado 60 > 40
-check("hueco de 60 bits: SI reencuadra", s.iface.timeouts==1, f"-> {s.iface.timeouts}")
+check("30-bit gap: does not resync", s.iface.timeouts==0, f"-> {s.iface.timeouts}")
+s.idle(30)                                # accumulated 60 > 40
+check("60-bit gap: DOES resync", s.iface.timeouts==1, f"-> {s.iface.timeouts}")
 
-print("\n=== 3. Se pierde un byte -> el parche lo cura ===")
+print("\n=== 3. Lost byte -> patch fixes it ===")
 s = Sim()
-for b in [0x20,0x00,0x00,0x00]: s.send_byte(b)   # 4 de 5 bytes
+for b in [0x20,0x00,0x00,0x00]: s.send_byte(b)   # 4 of 5 bytes
 s.idle(GAP_REAL)
 s.send_frame(0x40,0); s.idle(GAP_REAL)
 s.send_frame(0x20,0x02); s.idle(GAP_REAL)
-check("descarto la trama parcial", s.iface.timeouts>=1, f"-> {s.iface.timeouts}")
-check("las tramas siguientes llegan BIEN",
+check("partial frame discarded", s.iface.timeouts>=1, f"-> {s.iface.timeouts}")
+check("subsequent frames arrive correctly",
       s.iface.frames==[(0x40<<32)|0, (0x20<<32)|0x02],
       f"-> {[hex(f) for f in s.iface.frames]}")
 
-print("\n=== 4. SIN el parche: un byte de mas dispara el RUN fantasma ===")
+print("\n=== 4. WITHOUT patch: extra byte triggers phantom RUN ===")
 s = Sim(resync=False)
-s.send_byte(0xFF)                      # 1 byte espurio -> rx_count=1
+s.send_byte(0xFF)                      # 1 spurious byte -> rx_count=1
 s.idle(GAP_REAL)
 for n in (1,2,3):                      # REQ_REG x1, x2, x3
     s.send_frame(0x20,n); s.idle(GAP_REAL)
 got=[frame_bytes(f) for f in s.iface.frames]
 cmds=[f[0] for f in got]
-check("SIN parche: quedan corridas", any(c not in (0x20,0x40,0x10,0x50) for c in cmds),
+check("WITHOUT patch: frames are shifted", any(c not in (0x20,0x40,0x10,0x50) for c in cmds),
       f"-> cmds={[hex(c) for c in cmds]}")
-check("SIN parche: aparece STEP/RUN/RESET fantasma",
+check("WITHOUT patch: phantom STEP/RUN/RESET appears",
       any(c in (0x01,0x02,0x03) for c in cmds), f"-> cmds={[hex(c) for c in cmds]}")
 
-print("\n=== 5. CON el parche: el mismo byte espurio es inofensivo ===")
+print("\n=== 5. WITH patch: same spurious byte is harmless ===")
 s = Sim(resync=True)
 s.send_byte(0xFF); s.idle(GAP_REAL)
 for n in (1,2,3):
     s.send_frame(0x20,n); s.idle(GAP_REAL)
 got=[frame_bytes(f) for f in s.iface.frames]
 cmds=[f[0] for f in got]
-check("CON parche: todas las tramas son REQ_REG", cmds==[0x20,0x20,0x20],
+check("WITH patch: all frames are REQ_REG", cmds==[0x20,0x20,0x20],
       f"-> {[hex(c) for c in cmds]}")
-check("CON parche: los registros pedidos son los correctos",
+check("WITH patch: requested registers are correct",
       [f[4] for f in got]==[1,2,3], f"-> {got}")
-check("CON parche: ningun comando fantasma",
+check("WITH patch: no phantom commands",
       not any(c in (0x01,0x02,0x03) for c in cmds))
 
 print("\n"+"="*52)
-print("FALLARON: "+str(fails) if fails else "TODO OK")
+print("FAILED: "+str(fails) if fails else "ALL OK")

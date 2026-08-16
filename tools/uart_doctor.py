@@ -81,7 +81,7 @@ def describe_tx(frame: bytes) -> str:
     try:
         name = Command(cmd).name
     except ValueError:
-        return f"!! COMANDO DESCONOCIDO 0x{cmd:02X} payload=0x{payload:08X}"
+        return f"!! UNKNOWN COMMAND 0x{cmd:02X} payload=0x{payload:08X}"
 
     if cmd == Command.REQ_REG:
         n = payload & 0x1F
@@ -103,7 +103,7 @@ def describe_rx(frame: bytes) -> str:
     try:
         kind = ResponseKind(code).name
     except ValueError:
-        return f"!! RESPUESTA DESCONOCIDA 0x{code:02X} data=0x{data:08X}"
+        return f"!! UNKNOWN RESPONSE 0x{code:02X} data=0x{data:08X}"
     return f"{kind} = 0x{data:08X} ({data})"
 
 
@@ -156,7 +156,7 @@ class FrameAssembler:
         if self.buffer:
             self.log(
                 f"  {self.direction} .... {hexdump(self.buffer)}  "
-                f"| PARCIAL ({len(self.buffer)}/5 bytes en el buffer){gap}"
+                f"| PARTIAL ({len(self.buffer)}/5 bytes in buffer){gap}"
             )
 
     @property
@@ -164,8 +164,8 @@ class FrameAssembler:
         return self.total_bytes % FRAME_SIZE == 0
 
     def report(self) -> str:
-        state = "alineado" if self.aligned else f"DESALINEADO (resto {self.total_bytes % FRAME_SIZE})"
-        return f"{self.direction}: {self.total_bytes} bytes, {self.frames} tramas, {state}"
+        state = "aligned" if self.aligned else f"MISALIGNED (remainder {self.total_bytes % FRAME_SIZE})"
+        return f"{self.direction}: {self.total_bytes} bytes, {self.frames} frames, {state}"
 
 
 # =====================================================================
@@ -207,7 +207,7 @@ def make_traced_serial(log: Log, force_port: str | None = None,
         def write(self, data):
             written = super().write(data)
             if written is not None and written != len(data):
-                self._log(f"  !! ESCRITURA PARCIAL: {written}/{len(data)} bytes")
+                self._log(f"  !! PARTIAL WRITE: {written}/{len(data)} bytes")
             self.tx.feed(bytes(data))
             return written
 
@@ -217,8 +217,8 @@ def make_traced_serial(log: Log, force_port: str | None = None,
             elapsed = (time.monotonic() - t0) * 1000
             if len(data) < size:
                 self._log(
-                    f"  !! TIMEOUT: se pidieron {size} bytes y llegaron "
-                    f"{len(data)} tras {elapsed:.0f}ms"
+                    f"  !! TIMEOUT: requested {size} bytes, got "
+                    f"{len(data)} after {elapsed:.0f}ms"
                 )
             if data:
                 self.rx.feed(data)
@@ -229,7 +229,7 @@ def make_traced_serial(log: Log, force_port: str | None = None,
             if pending:
                 stale = super().read(pending)
                 self._log(
-                    f"  !! DESCARTADOS {len(stale)} bytes viejos del buffer: "
+                    f"  !! DISCARDED {len(stale)} stale bytes from buffer: "
                     f"{hexdump(stale)}"
                 )
                 self.rx.total_bytes += len(stale)
@@ -249,7 +249,7 @@ def install_tracer(log: Log, port: str | None = None,
                    baud: int | None = None) -> None:
     """Patches serial.Serial so any script becomes instrumented."""
     serial.Serial = make_traced_serial(log, port, baud)
-    log(f"Tracer instalado sobre serial.Serial (forzando puerto {port})")
+    log(f"Tracer installed on serial.Serial (forcing port {port})")
 
 
 def summarize_tracers(log: Log) -> None:
@@ -258,9 +258,9 @@ def summarize_tracers(log: Log) -> None:
         log(tracer.rx.report())
         if not tracer.tx.aligned:
             log(
-                "  !! El total de bytes enviados NO es multiplo de 5: la FPGA "
-                "quedo desalineada y no se recupera sin reset (uart_interface.v "
-                "no tiene reencuadre)."
+                "  !! Total bytes sent is NOT a multiple of 5: the FPGA "
+                "stays misaligned and cannot recover without reset "
+                "(uart_interface.v has no resync)."
             )
 
 
@@ -285,9 +285,9 @@ class Probe:
             self.ser = _RealSerial(port=port, baudrate=baud, timeout=timeout)
         except serial.SerialException as exc:
             raise SystemExit(
-                f"No se pudo abrir {port}: {exc}\n"
-                "Si dice 'device reports readiness'/'Resource busy', hay otro "
-                "proceso con el puerto abierto (¿dashboard.py corriendo?)."
+                f"Could not open {port}: {exc}\n"
+                "If it says 'device reports readiness'/'Resource busy', another "
+                "process has the port open (dashboard.py running?)."
             )
         self.tx_total = 0
 
@@ -299,7 +299,7 @@ class Probe:
             return b""
         stale = self.ser.read(pending)
         self.log(
-            f"  !! {len(stale)} bytes huerfanos en el buffer {label}: {hexdump(stale)}"
+            f"  !! {len(stale)} orphan bytes in buffer {label}: {hexdump(stale)}"
         )
         return stale
 
@@ -322,8 +322,8 @@ class Probe:
             self.log(f"  RX {hexdump(data)}  | {describe_rx(data)}  ({elapsed:.0f}ms)")
             return data
         self.log(
-            f"  RX -- SIN RESPUESTA: {len(data)}/5 bytes tras {elapsed:.0f}ms"
-            + (f"  parcial={hexdump(data)}" if data else "")
+            f"  RX -- NO RESPONSE: {len(data)}/5 bytes after {elapsed:.0f}ms"
+            + (f"  partial={hexdump(data)}" if data else "")
         )
         return None
 
@@ -346,17 +346,17 @@ class Probe:
         would accumulate 1,3,6,10 == 1,3,1,0 mod 5 and would never test +2
         or +4.)
         """
-        self.log("  Probando reencuadre con bytes de relleno...")
+        self.log("  Trying resync with padding bytes...")
         for total in range(1, FRAME_SIZE):
             self.ser.write(b"\x00")
             self.ser.flush()
             self.tx_total += 1
-            self.drain("(tras relleno)")
-            self.log(f"    relleno acumulado de {total} byte(s) -> probando REQ_PC")
+            self.drain("(after padding)")
+            self.log(f"    accumulated padding of {total} byte(s) -> trying REQ_PC")
             if self.ping(timeout=1.0):
-                self.log(f"  ==> RECUPERADO con {total} byte(s) de relleno")
+                self.log(f"  ==> RECOVERED with {total} byte(s) of padding")
                 return total
-        self.log("  ==> No se recupero con ningun relleno (probados +1,+2,+3,+4)")
+        self.log("  ==> Did not recover with any padding (tried +1,+2,+3,+4)")
         return None
 
     def close(self) -> None:
@@ -375,36 +375,36 @@ def diagnose(port: str, baud: int, timeout: float, log: Log) -> int:
     verdict = 0
 
     try:
-        log.rule("0. Estado inicial")
-        stale = probe.drain("al abrir (sobras de una sesion anterior)")
+        log.rule("0. Initial state")
+        stale = probe.drain("on open (leftover from previous session)")
         if stale:
             log(
-                "  NOTA: habia bytes sin leer. Si no son multiplo de 5, la "
-                "sesion anterior dejo la FPGA desalineada."
+                "  NOTE: there were unread bytes. If not a multiple of 5, the "
+                "previous session left the FPGA misaligned."
             )
 
-        log.rule("1. Prueba de vida (10 x REQ_PC seguidos)")
+        log.rule("1. Liveness check (10 x REQ_PC consecutive)")
         alive = 0
         for i in range(10):
             if probe.ping():
                 alive += 1
             else:
-                log(f"  !! murio en el intento {i + 1}")
+                log(f"  !! died on attempt {i + 1}")
                 break
-        log(f"  {alive}/10 respuestas")
+        log(f"  {alive}/10 responses")
         if alive == 0:
-            log("  El enlace ya estaba muerto antes de mandar ningun comando.")
+            log("  The link was already dead before sending any command.")
             if probe.try_realign() is None:
                 log(
-                    "  DIAGNOSTICO: la FPGA no responde ni reencuadrando. "
-                    "Su FSM esta colgada (probablemente en RUNNING esperando "
-                    "cpu_halted, o en SEND_RESP esperando tx_busy). "
-                    "Hay que reprogramar la placa o apretar el reset fisico."
+                    "  DIAGNOSIS: FPGA does not respond even after resync. "
+                    "Its FSM is hung (probably in RUNNING waiting for "
+                    "cpu_halted, or in SEND_RESP waiting for tx_busy). "
+                    "The board must be reprogrammed or the physical reset pressed."
                 )
                 return 2
-            log("  DIAGNOSTICO: estaba DESALINEADA, no colgada.")
+            log("  DIAGNOSIS: it was MISALIGNED, not hung.")
 
-        log.rule("2. Barrido completo de registros (33 intercambios)")
+        log.rule("2. Full register sweep (33 exchanges)")
         ok = 0
         probe.send(Command.REQ_PC)
         if probe.expect():
@@ -414,45 +414,45 @@ def diagnose(port: str, baud: int, timeout: float, log: Log) -> int:
             if probe.expect():
                 ok += 1
             else:
-                log(f"  !! murio leyendo x{n} (intercambio {ok + 1})")
+                log(f"  !! died reading x{n} (exchange {ok + 1})")
                 break
-        log(f"  {ok}/33 intercambios completos")
+        log(f"  {ok}/33 complete exchanges")
         if ok < 33:
             verdict = 1
             probe.try_realign()
 
-        log.rule("3. Comando STEP, despues prueba de vida")
+        log.rule("3. STEP command, then liveness check")
         probe.send(Command.STEP)
         time.sleep(0.2)
-        probe.drain("(STEP no deberia responder nada)")
+        probe.drain("(STEP should not respond)")
         if probe.ping():
-            log("  OK: el enlace sobrevive a STEP")
+            log("  OK: link survives STEP")
         else:
-            log("  !! EL ENLACE MURIO DESPUES DE STEP")
+            log("  !! LINK DIED AFTER STEP")
             verdict = 1
             if probe.try_realign() is None:
                 log(
-                    "  DIAGNOSTICO: STEP cuelga la FSM. Con cpu_enable en 1 un "
-                    "ciclo el pipeline avanza; revisar si algo en el datapath "
-                    "deja al debug_unit sin volver a IDLE."
+                    "  DIAGNOSIS: STEP hangs the FSM. With cpu_enable high for one "
+                    "cycle the pipeline advances; check if something in the datapath "
+                    "prevents debug_unit from returning to IDLE."
                 )
                 return 2
 
-        log.rule("4. Comando RESET, despues prueba de vida")
+        log.rule("4. RESET command, then liveness check")
         probe.send(Command.RESET)
         time.sleep(0.2)
-        probe.drain("(RESET no deberia responder nada)")
+        probe.drain("(RESET should not respond)")
         if probe.ping():
-            log("  OK: el enlace sobrevive a RESET")
+            log("  OK: link survives RESET")
         else:
-            log("  !! EL ENLACE MURIO DESPUES DE RESET")
+            log("  !! LINK DIED AFTER RESET")
             verdict = 1
             if probe.try_realign() is None:
                 return 2
 
-        log.rule("5. Comando RUN, despues sondeo hasta que frene")
+        log.rule("5. RUN command, then poll until it stops")
         probe.send(Command.RUN)
-        log("  Sondeando REQ_PC (la FPGA ignora la UART mientras corre)...")
+        log("  Polling REQ_PC (FPGA ignores UART while running)...")
         deadline = time.monotonic() + 10.0
         recovered = False
         attempts = 0
@@ -462,30 +462,30 @@ def diagnose(port: str, baud: int, timeout: float, log: Log) -> int:
                 recovered = True
                 break
         if recovered:
-            log(f"  OK: freno y volvio a responder tras {attempts} sondeos")
+            log(f"  OK: stopped and responded after {attempts} polls")
         else:
-            log("  !! NO VOLVIO NUNCA tras RUN (10 s)")
+            log("  !! NEVER CAME BACK after RUN (10 s)")
             verdict = 1
             log(
-                "  DIAGNOSTICO PROBABLE: cpu_halted nunca se activa, asi que el "
-                "debug_unit se queda en RUNNING para siempre ignorando la UART. "
-                "cpu_halted = (instruction_id == 0 && pc_if > 0x10): si el "
-                "programa no termina en instrucciones nulas, o el pipeline "
-                "quedo frenado con el PC por debajo de 0x10, no se cumple nunca. "
-                "Es un cuelgue del que NO se sale por UART: hay que reprogramar."
+                "  PROBABLE DIAGNOSIS: cpu_halted never activates, so "
+                "debug_unit stays in RUNNING forever ignoring the UART. "
+                "cpu_halted = (instruction_id == 0 && pc_if > 0x10): if the "
+                "program does not end in null instructions, or the pipeline "
+                "is stalled with PC below 0x10, it never triggers. "
+                "This is a hang that cannot be recovered via UART: reprogramming is required."
             )
             if probe.try_realign() is None:
                 return 2
 
-        log.rule("Resumen")
-        log(f"  Bytes enviados en total: {probe.tx_total} "
-            f"({'multiplo de 5, alineado' if probe.tx_total % 5 == 0 else 'NO multiplo de 5'})")
+        log.rule("Summary")
+        log(f"  Total bytes sent: {probe.tx_total} "
+            f"({'multiple of 5, aligned' if probe.tx_total % 5 == 0 else 'NOT multiple of 5'})")
         if verdict == 0:
-            log("  El enlace sobrevivio a toda la secuencia.")
+            log("  The link survived the entire sequence.")
         return verdict
 
     except KeyboardInterrupt:
-        log("Interrumpido por el usuario")
+        log("Interrupted by user")
         return 130
     finally:
         probe.close()
@@ -500,20 +500,20 @@ def trace_dashboard(port: str, baud: int, log: Log) -> int:
     """Runs dashboard.py (the one at the repo root) with the trace on."""
     script = Path(__file__).resolve().parent.parent / "dashboard.py"
     if not script.exists():
-        log(f"No encuentro {script}")
+        log(f"Cannot find {script}")
         return 1
 
     install_tracer(log, port, baud)
-    log.rule(f"Ejecutando {script.name}")
+    log.rule(f"Running {script.name}")
     sys.argv = [str(script)]
     try:
         runpy.run_path(str(script), run_name="__main__")
     except SystemExit:
         pass
-    except Exception as exc:  # noqa: BLE001 - queremos ver cualquier fallo
-        log(f"!! El script termino con excepcion: {exc!r}")
+    except Exception as exc:  # noqa: BLE001 - we want to see any failure
+        log(f"!! Script terminated with exception: {exc!r}")
     finally:
-        log.rule("Resumen de la traza")
+        log.rule("Trace summary")
         summarize_tracers(log)
     return 0
 
@@ -521,7 +521,7 @@ def trace_dashboard(port: str, baud: int, log: Log) -> int:
 def trace_tui(port: str, baud: int, log: Log) -> int:
     """Runs the TUI dashboard (riscv_debug) with the trace on."""
     install_tracer(log, port, baud)
-    log.rule("Ejecutando riscv_debug")
+    log.rule("Running riscv_debug")
     from riscv_debug.__main__ import main as tui_main
 
     sys.argv = ["riscv_debug", "--port", port, "--baud", str(baud)]
@@ -530,9 +530,9 @@ def trace_tui(port: str, baud: int, log: Log) -> int:
     except SystemExit:
         pass
     except Exception as exc:  # noqa: BLE001
-        log(f"!! El dashboard termino con excepcion: {exc!r}")
+        log(f"!! Dashboard terminated with exception: {exc!r}")
     finally:
-        log.rule("Resumen de la traza")
+        log.rule("Trace summary")
         summarize_tracers(log)
     return 0
 
@@ -545,12 +545,12 @@ def trace_tui(port: str, baud: int, log: Log) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="uart_doctor",
-        description="Traza y diagnostica el enlace UART con la FPGA.",
+        description="Traces and diagnoses the UART link with the FPGA.",
     )
     parser.add_argument(
         "mode",
         choices=["diagnose", "trace-dashboard", "trace-tui"],
-        help="diagnose: secuencia controlada; trace-*: corre el script bajo traza",
+        help="diagnose: controlled sequence; trace-*: runs script under trace",
     )
     parser.add_argument("--port", "-p", required=True)
     parser.add_argument("--baud", "-b", type=int, default=9600)
@@ -559,7 +559,7 @@ def main() -> int:
     args = parser.parse_args()
 
     log = Log(Path(args.log) if args.log else None)
-    log(f"uart_doctor — modo {args.mode} — puerto {args.port} @ {args.baud}")
+    log(f"uart_doctor — mode {args.mode} — port {args.port} @ {args.baud}")
     log(f"log: {args.log}")
     log()
 
@@ -571,7 +571,7 @@ def main() -> int:
         return trace_tui(args.port, args.baud, log)
     finally:
         log()
-        log(f"Log completo en: {Path(args.log).resolve()}")
+        log(f"Full log at: {Path(args.log).resolve()}")
         log.close()
 
 

@@ -179,7 +179,7 @@ class Pipe:
                     if bwe>>i & 1: mask|=0xFF<<(8*i)
                 word=((word & ~mask)|(wdata & mask))&M
                 self.dmem[widx]=word
-            new_douta=word           # WRITE_FIRST / lectura
+            new_douta=word           # WRITE_FIRST / read
 
         # ---- halt ----
         if self.ifid['ins']==0 and self.ifid['valid'] and self.pc_fetched>0x10:
@@ -244,17 +244,17 @@ def run(name, src, check_regs=None):
     print(("  PASS  " if ok else "  FAIL  ")+name)
     if not ok:
         for i in bad[:6]:
-            print(f"        x{i}: pipeline=0x{got_r[i]:08X}  referencia=0x{exp_r[i]:08X}")
+            print(f"        x{i}: pipeline=0x{got_r[i]:08X}  reference=0x{exp_r[i]:08X}")
         for i in badm[:4]:
-            print(f"        mem[{i}]: pipeline=0x{got_m[i]:08X}  referencia=0x{exp_m[i]:08X}")
+            print(f"        mem[{i}]: pipeline=0x{got_m[i]:08X}  reference=0x{exp_m[i]:08X}")
         fails.append(name)
 
 NOPS="\n".join(["nop"]*8)
 
-print("=== Riesgos de datos (lo que ya andaba) ===")
+print("=== Data hazards (already working) ===")
 run("forwarding + load-use", (pathlib.Path(__file__).resolve().parent.parent / "examples" / "hazards.s").read_text().replace("FIN:    beq  zero, zero, FIN","")+NOPS)
 
-print("\n=== Fix 1: operaciones nuevas de la ALU ===")
+print("\n=== Fix 1: new ALU operations ===")
 run("sll/srl/sra", f"""
     addi t0, zero, -8
     addi t1, zero, 2
@@ -269,7 +269,7 @@ run("slt/sltu/xor", f"""
     sltu a1, t0, t1
     xor  a2, t0, t1
     {NOPS}""")
-run("inmediatos: slli/srli/srai/xori/slti/sltiu/ori/andi", f"""
+run("immediates: slli/srli/srai/xori/slti/sltiu/ori/andi", f"""
     addi t0, zero, -16
     slli a0, t0, 3
     srli a1, t0, 4
@@ -280,18 +280,18 @@ run("inmediatos: slli/srli/srai/xori/slti/sltiu/ori/andi", f"""
     ori  a6, t0, 15
     andi a7, t0, 255
     {NOPS}""")
-run("addi negativo NO es resta", f"addi t0, zero, 100\naddi t1, t0, -1\n{NOPS}")
+run("negative addi is NOT subtraction", f"addi t0, zero, 100\naddi t1, t0, -1\n{NOPS}")
 
 print("\n=== Fix 2: lui ===")
 run("lui solo", f"lui a0, 0x12345\n{NOPS}")
-run("lui despues de escribir el registro que ocupa esos bits", f"""
+run("lui after writing the register that occupies those bits", f"""
     addi x18, zero, 999
     lui  a0, 0x12345
     {NOPS}""")
-run("lui + addi (patron li)", f"lui a0, 0x12345\naddi a0, a0, 0x678\n{NOPS}")
+run("lui + addi (li pattern)", f"lui a0, 0x12345\naddi a0, a0, 0x678\n{NOPS}")
 
-print("\n=== Fix 3: saltos ===")
-run("beq tomado", f"""
+print("\n=== Fix 3: jumps/branches ===")
+run("beq taken", f"""
     addi t0, zero, 5
     addi t1, zero, 5
     beq  t0, t1, DEST
@@ -299,14 +299,14 @@ run("beq tomado", f"""
     addi a1, zero, 88
 DEST: addi a2, zero, 7
     {NOPS}""")
-run("beq NO tomado", f"""
+run("beq NOT taken", f"""
     addi t0, zero, 5
     addi t1, zero, 6
     beq  t0, t1, DEST
     addi a0, zero, 99
 DEST: addi a2, zero, 7
     {NOPS}""")
-run("bne tomado", f"""
+run("bne taken", f"""
     addi t0, zero, 5
     addi t1, zero, 6
     bne  t0, t1, DEST
@@ -314,14 +314,14 @@ run("bne tomado", f"""
     addi a1, zero, 88
 DEST: addi a2, zero, 7
     {NOPS}""")
-run("bne NO tomado", f"""
+run("bne NOT taken", f"""
     addi t0, zero, 5
     addi t1, zero, 5
     bne  t0, t1, DEST
     addi a0, zero, 33
 DEST: addi a2, zero, 7
     {NOPS}""")
-run("salto hacia atras (loop)", f"""
+run("backward jump (loop)", f"""
     addi t0, zero, 3
     addi t1, zero, 0
 LOOP: addi t1, t1, 10
@@ -329,7 +329,7 @@ LOOP: addi t1, t1, 10
     bne  t0, zero, LOOP
     add  a0, t1, zero
     {NOPS}""")
-run("jal guarda pc+4 y salta", f"""
+run("jal saves pc+4 and jumps", f"""
     jal  ra, DEST
     addi a0, zero, 99
     addi a1, zero, 88
@@ -342,7 +342,7 @@ run("jalr", f"""
     addi a1, zero, 88
     addi a2, zero, 7
     {NOPS}""")
-run("branch con operandos adelantados", f"""
+run("branch with forwarded operands", f"""
     addi t0, zero, 5
     addi t1, t0, 0
     beq  t0, t1, DEST
@@ -350,13 +350,13 @@ run("branch con operandos adelantados", f"""
 DEST: addi a1, zero, 1
     {NOPS}""")
 
-print("\n=== Fix 4: accesos de byte y media palabra ===")
+print("\n=== Fix 4: byte and halfword accesses ===")
 run("sw/lw", f"""
     addi t0, zero, 291
     sw   t0, 16(zero)
     lw   a0, 16(zero)
     {NOPS}""")
-run("sb en los 4 offsets", f"""
+run("sb at 4 offsets", f"""
     addi t0, zero, 0xAA
     sb   t0, 32(zero)
     sb   t0, 33(zero)
@@ -364,38 +364,38 @@ run("sb en los 4 offsets", f"""
     sb   t0, 35(zero)
     lw   a0, 32(zero)
     {NOPS}""")
-run("sh en offset 0 y 2", f"""
+run("sh at offset 0 and 2", f"""
     addi t0, zero, 0x7BC
     sh   t0, 40(zero)
     sh   t0, 42(zero)
     lw   a0, 40(zero)
     {NOPS}""")
-run("lb con signo", f"""
+run("signed lb", f"""
     addi t0, zero, 0xF0
     sb   t0, 48(zero)
     lb   a0, 48(zero)
     lbu  a1, 48(zero)
     {NOPS}""")
-run("lh con signo", f"""
+run("signed lh", f"""
     lui  t0, 0xFFFF0
     sh   t0, 56(zero)
     lh   a0, 56(zero)
     lhu  a1, 56(zero)
     {NOPS}""")
-run("lb en offset 3", f"""
+run("lb at offset 3", f"""
     addi t0, zero, 0x7F
     sb   t0, 67(zero)
     lb   a0, 67(zero)
     lw   a1, 64(zero)
     {NOPS}""")
-run("load-use con lb", f"""
+run("load-use with lb", f"""
     addi t0, zero, 0x25
     sb   t0, 72(zero)
     lb   a0, 72(zero)
     add  a1, a0, a0
     {NOPS}""")
 
-print("\n=== Programas aleatorios contra la referencia ===")
+print("\n=== Random programs against reference ===")
 import random
 R  = ["add","sub","sll","srl","sra","and","or","xor","slt","sltu"]
 I  = ["addi","andi","ori","xori","slti","sltiu"]
@@ -431,9 +431,9 @@ for t in range(400):
     exp_r,exp_m,_=reference(prog); got_r,got_m,_=Pipe(prog).run()
     if [i for i in range(32) if got_r[i]!=exp_r[i]] or [i for i in range(64) if got_m[i]!=exp_m[i]]:
         bad+=1
-print(f"  {'PASS' if bad==0 else 'FAIL'}  {total} programas aleatorios, {bad} diferencias")
-if bad: fails.append("programas aleatorios")
+print(f"  {'PASS' if bad==0 else 'FAIL'}  {total} random programs, {bad} differences")
+if bad: fails.append("random programs")
 
 print("\n"+"="*56)
-print(f"FALLARON {len(fails)}: {fails}" if fails else "TODO OK")
+print(f"FAILED {len(fails)}: {fails}" if fails else "ALL OK")
 sys.exit(1 if fails else 0)

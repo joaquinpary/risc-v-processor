@@ -113,7 +113,7 @@ def decode(raw: bytes) -> Frame:
     """Decodes a 5 byte frame received from the FPGA."""
     if len(raw) != FRAME_SIZE:
         raise ProtocolError(
-            f"Se esperaban {FRAME_SIZE} bytes y llegaron {len(raw)}: {raw!r}"
+            f"Expected {FRAME_SIZE} bytes, got {len(raw)}: {raw!r}"
         )
     code, payload = _FRAME.unpack(raw)
     return Frame(code=code, payload=payload)

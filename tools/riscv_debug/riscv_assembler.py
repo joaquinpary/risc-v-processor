@@ -120,11 +120,11 @@ PSEUDO_SIZE = {"nop": 1, "mv": 1, "j": 1, "jr": 1, "ret": 1, "li": None}
 # yet, so nobody loses an afternoon debugging the wrong hardware.
 
 CPU_UNSUPPORTED: dict[str, str] = {
-    "auipc": "no esta en la tabla de opcodes de control.v",
-    "blt":   "la condicion de salto solo decodifica beq y bne",
-    "bge":   "la condicion de salto solo decodifica beq y bne",
-    "bltu":  "la condicion de salto solo decodifica beq y bne",
-    "bgeu":  "la condicion de salto solo decodifica beq y bne",
+    "auipc": "not in the control.v opcode table",
+    "blt":   "branch condition only decodes beq and bne",
+    "bge":   "branch condition only decodes beq and bne",
+    "bltu":  "branch condition only decodes beq and bne",
+    "bgeu":  "branch condition only decodes beq and bne",
 }
 
 
@@ -141,7 +141,7 @@ class AssemblerError(Exception):
         self.line_number = line_number
         self.source = source
         if line_number is not None:
-            message = f"linea {line_number}: {message}"
+            message = f"line {line_number}: {message}"
             if source:
                 message += f"\n    {source.strip()}"
         super().__init__(message)
@@ -187,7 +187,7 @@ def parse_register(token: str, line_number: int, source: str) -> int:
     """Accepts `x5`, `t0`, `sp`, `fp`... and returns the register number."""
     name = token.strip().lower()
     if name not in REGISTERS:
-        raise AssemblerError(f"registro desconocido: {token!r}", line_number, source)
+        raise AssemblerError(f"unknown register: {token!r}", line_number, source)
     return REGISTERS[name]
 
 
@@ -209,7 +209,7 @@ def parse_immediate(token: str, line_number: int, source: str) -> int:
             value = int(text, 10)
     except ValueError:
         raise AssemblerError(
-            f"inmediato invalido: {token!r}", line_number, source
+            f"invalid immediate: {token!r}", line_number, source
         ) from None
     return -value if negative else value
 
@@ -223,7 +223,7 @@ def check_range(value: int, bits: int, name: str, line_number: int,
         low, high = 0, (1 << bits) - 1
     if not low <= value <= high:
         raise AssemblerError(
-            f"{name} fuera de rango: {value} (permitido {low}..{high})",
+            f"{name} out of range: {value} (allowed {low}..{high})",
             line_number, source,
         )
 
@@ -241,7 +241,7 @@ def parse_mem_operand(token: str, line_number: int, source: str) -> tuple[int, i
     match = _MEM_OPERAND.match(token)
     if not match:
         raise AssemblerError(
-            f"esperaba la forma offset(registro), recibi {token!r}",
+            f"expected offset(register) form, got {token!r}",
             line_number, source,
         )
     offset_text, base_text = match.groups()
@@ -327,7 +327,7 @@ def _pseudo_size(mnemonic: str, operands: list[str], number: int, source: str) -
     if mnemonic != "li":
         return PSEUDO_SIZE[mnemonic]
     if len(operands) != 2:
-        raise AssemblerError("li espera 2 operandos: li rd, valor", number, source)
+        raise AssemblerError("li expects 2 operands: li rd, value", number, source)
     upper, _ = _li_parts(parse_immediate(operands[1], number, source))
     return 1 if upper is None else 2
 
@@ -357,7 +357,7 @@ def assemble(text: str, base_address: int = 0) -> Program:
                 break
             label, rest = match.groups()
             if label in program.labels:
-                raise AssemblerError(f"etiqueta duplicada: {label!r}", number, raw)
+                raise AssemblerError(f"duplicate label: {label!r}", number, raw)
             program.labels[label] = address
             stripped = rest.strip()
             if not stripped:
@@ -368,7 +368,7 @@ def assemble(text: str, base_address: int = 0) -> Program:
         # Assembler directives: ignored with a warning
         if stripped.startswith("."):
             program.warnings.append(
-                f"linea {number}: directiva ignorada: {stripped.split()[0]}"
+                f"line {number}: ignored directive: {stripped.split()[0]}"
             )
             continue
 
@@ -381,7 +381,7 @@ def assemble(text: str, base_address: int = 0) -> Program:
         elif _is_known(mnemonic):
             size = 1
         else:
-            raise AssemblerError(f"instruccion desconocida: {mnemonic!r}", number, raw)
+            raise AssemblerError(f"unknown instruction: {mnemonic!r}", number, raw)
 
         lines.append(_Line(number, raw, mnemonic, operands, address))
         address += 4 * size
@@ -399,8 +399,8 @@ def assemble(text: str, base_address: int = 0) -> Program:
         if line.mnemonic in CPU_UNSUPPORTED and line.mnemonic not in seen_unsupported:
             seen_unsupported.add(line.mnemonic)
             program.warnings.append(
-                f"'{line.mnemonic}' se codifica bien pero esta CPU no lo ejecuta "
-                f"correctamente: {CPU_UNSUPPORTED[line.mnemonic]}"
+                f"'{line.mnemonic}' encodes correctly but this CPU does not execute it "
+                f"properly: {CPU_UNSUPPORTED[line.mnemonic]}"
             )
 
     return program
@@ -425,7 +425,7 @@ def _resolve_target(token: str, labels: dict[str, int], current: int,
         return labels[token] - current
     if re.match(r"^-?(0[xX])?[0-9A-Fa-f]+$", token) and not token.isalpha():
         return parse_immediate(token, number, source)
-    raise AssemblerError(f"etiqueta no definida: {token!r}", number, source)
+        raise AssemblerError(f"undefined label: {token!r}", number, source)
 
 
 def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
@@ -438,7 +438,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
     def need(count: int, form: str) -> None:
         if len(ops) != count:
             raise AssemblerError(
-                f"{m} espera {count} operandos ({form}), recibi {len(ops)}", n, src
+                f"{m} expects {count} operand(s) ({form}), got {len(ops)}", n, src
             )
 
     # -------- pseudo-instructions --------
@@ -457,7 +457,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         offset = _resolve_target(ops[0], labels, line.address, n, src)
         check_range(offset, 21, "offset de j", n, src)
         if offset % 2:
-            raise AssemblerError("el destino de j debe ser par", n, src)
+            raise AssemblerError("j target must be even", n, src)
         return [encode_j(0b1101111, 0, offset)]
     if m == "li":
         need(2, "li rd, valor")
@@ -481,7 +481,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         need(3, f"{m} rd, rs1, imm")
         opcode, funct3 = I_ARITH[m]
         imm = parse_immediate(ops[2], n, src)
-        check_range(imm, 12, f"inmediato de {m}", n, src)
+        check_range(imm, 12, f"{m} immediate", n, src)
         return [encode_i(opcode, funct3, reg(0), reg(1), imm)]
 
     # -------- Shift I-type --------
@@ -489,7 +489,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         need(3, f"{m} rd, rs1, shamt")
         opcode, funct3, funct7 = I_SHIFT[m]
         shamt = parse_immediate(ops[2], n, src)
-        check_range(shamt, 5, f"shamt de {m}", n, src, signed=False)
+        check_range(shamt, 5, f"{m} shamt", n, src, signed=False)
         return [encode_i(opcode, funct3, reg(0), reg(1), (funct7 << 5) | shamt)]
 
     # -------- Load I-type / jalr --------
@@ -501,9 +501,9 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
             rs1, imm = reg(1), parse_immediate(ops[2], n, src)
         else:
             raise AssemblerError(
-                f"{m} espera 'rd, offset(base)' o 'rd, rs1, offset'", n, src
+                f"{m} expects 'rd, offset(base)' or 'rd, rs1, offset'", n, src
             )
-        check_range(imm, 12, f"offset de {m}", n, src)
+        check_range(imm, 12, f"{m} offset", n, src)
         return [encode_i(opcode, funct3, reg(0), rs1, imm)]
 
     # -------- S-type --------
@@ -511,7 +511,7 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         need(2, f"{m} rs2, offset(base)")
         opcode, funct3 = S_TYPE[m]
         imm, rs1 = parse_mem_operand(ops[1], n, src)
-        check_range(imm, 12, f"offset de {m}", n, src)
+        check_range(imm, 12, f"{m} offset", n, src)
         return [encode_s(opcode, funct3, rs1, reg(0), imm)]
 
     # -------- B-type --------
@@ -520,15 +520,15 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         opcode, funct3 = B_TYPE[m]
         offset = _resolve_target(ops[2], labels, line.address, n, src)
         if offset % 2:
-            raise AssemblerError("el destino de un branch debe ser par", n, src)
-        check_range(offset, 13, f"offset de {m}", n, src)
+            raise AssemblerError("branch target must be even", n, src)
+        check_range(offset, 13, f"{m} offset", n, src)
         return [encode_b(opcode, funct3, reg(0), reg(1), offset)]
 
     # -------- U-type --------
     if m in U_TYPE:
         need(2, f"{m} rd, imm20")
         imm = parse_immediate(ops[1], n, src)
-        check_range(imm, 20, f"inmediato de {m}", n, src, signed=False)
+        check_range(imm, 20, f"{m} immediate", n, src, signed=False)
         return [encode_u(U_TYPE[m], reg(0), imm)]
 
     # -------- J-type --------
@@ -536,11 +536,11 @@ def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
         need(2, f"{m} rd, destino")
         offset = _resolve_target(ops[1], labels, line.address, n, src)
         if offset % 2:
-            raise AssemblerError("el destino de jal debe ser par", n, src)
-        check_range(offset, 21, f"offset de {m}", n, src)
+            raise AssemblerError("jal target must be even", n, src)
+        check_range(offset, 21, f"{m} offset", n, src)
         return [encode_j(J_TYPE[m], reg(0), offset)]
 
-    raise AssemblerError(f"instruccion desconocida: {m!r}", n, src)
+    raise AssemblerError(f"unknown instruction: {m!r}", n, src)
 
 
 # =====================================================================
@@ -563,7 +563,7 @@ def parse_hex(text: str) -> Program:
             line = line[2:]
         if not re.fullmatch(r"[0-9A-Fa-f]{1,8}", line):
             raise AssemblerError(
-                f"esperaba una palabra hexadecimal de hasta 8 digitos, recibi {raw.strip()!r}",
+                f"expected a hex word of up to 8 digits, got {raw.strip()!r}",
                 number, raw,
             )
         word = int(line, 16)
@@ -576,7 +576,7 @@ def load_file(path: str | Path) -> Program:
     """Loads `.hex` or assembly depending on the extension."""
     file_path = Path(path)
     if not file_path.exists():
-        raise AssemblerError(f"no existe el archivo: {file_path}")
+        raise AssemblerError(f"file not found: {file_path}")
     text = file_path.read_text(encoding="utf-8", errors="replace")
     if file_path.suffix.lower() in (".hex", ".txt"):
         return parse_hex(text)
@@ -598,14 +598,14 @@ def _run_self_test() -> int:
         shown_got = f"0x{got:08X}" if isinstance(got, int) else got
         shown_exp = f"0x{expected:08X}" if isinstance(expected, int) else expected
         print(f"  {'PASS' if ok else 'FAIL'}  {name}"
-              + ("" if ok else f"   obtuve {shown_got}, esperaba {shown_exp}"))
+              + ("" if ok else f"   got {shown_got}, expected {shown_exp}"))
         if not ok:
             failures.append(name)
 
     def one(text: str) -> int:
         return assemble(text).words[0]
 
-    print("=== Vectores del programa de prueba del TP ===")
+    print("=== Test program vectors from TP ===")
     golden = [
         ("addi x1, x0, 42",   0x02A00093),
         ("addi x2, x0, 100",  0x06400113),
@@ -623,7 +623,7 @@ def _run_self_test() -> int:
     for source, expected in golden:
         check(source, one(source), expected)
 
-    print("\n=== Formatos pedidos ===")
+    print("\n=== Requested formats ===")
     check("lw x5, 4(x2)",   one("lw x5, 4(x2)"),   0x00412283)
     check("sw x5, 0(x2)",   one("sw x5, 0(x2)"),   0x00512023)
     check("sw x5, 4(x2)",   one("sw x5, 4(x2)"),   0x00512223)
@@ -637,19 +637,19 @@ def _run_self_test() -> int:
     check("srl x3, x1, x2", one("srl x3, x1, x2"), 0x0020D1B3)
     check("slt x3, x1, x2", one("slt x3, x1, x2"), 0x0020A1B3)
 
-    print("\n=== Nombres ABI, hex, negativos, comentarios ===")
+    print("\n=== ABI names, hex, negatives, comments ===")
     check("addi t0, zero, 42 == addi x5, x0, 42",
           one("addi t0, zero, 42"), one("addi x5, x0, 42"))
     check("addi x1, x0, 0x2A == 42", one("addi x1, x0, 0x2A"), 0x02A00093)
     check("addi x1, x0, -1", one("addi x1, x0, -1"), 0xFFF00093)
     check("addi x1, x0, -10", one("addi x1, x0, -10"), 0xFF600093)
-    check("sw con offset negativo", one("sw x5, -4(x2)"), 0xFE512E23)
-    check("comentario con #", one("addi x1, x0, 42  # hola"), 0x02A00093)
-    check("comentario con ;", one("addi x1, x0, 42  ; hola"), 0x02A00093)
+    check("sw with negative offset", one("sw x5, -4(x2)"), 0xFE512E23)
+    check("comment with #", one("addi x1, x0, 42  # hola"), 0x02A00093)
+    check("comment with ;", one("addi x1, x0, 42  ; hola"), 0x02A00093)
     check("nop", one("nop"), 0x00000013)
     check("mv x1, x2", one("mv x1, x2"), 0x00010093)
 
-    print("\n=== Etiquetas ===")
+    print("\n=== Labels ===")
     prog = assemble("""
         # add until t0 is 0
         addi t0, zero, 3
@@ -661,59 +661,59 @@ def _run_self_test() -> int:
     FIN:
         add  a0, t1, zero
     """)
-    check("etiquetas: 6 instrucciones", len(prog), 6)
+    check("labels: 6 instructions", len(prog), 6)
     check("LOOP en 0x04", prog.labels["LOOP"], 4)
     check("FIN en 0x14", prog.labels["FIN"], 20)
     # beq t0, zero, FIN is at 0x0C and jumps to 0x14 -> offset +8
-    check("salto hacia adelante (+8)", prog.words[3], 0x00028463)
+    check("forward jump (+8)", prog.words[3], 0x00028463)
     # beq zero,zero,LOOP is at 0x10 and jumps to 0x04 -> offset -12
-    check("salto hacia atras (-12)", prog.words[4], 0xFE000AE3)
+    check("backward jump (-12)", prog.words[4], 0xFE000AE3)
 
-    print("\n=== li (1 y 2 instrucciones) ===")
-    check("li chico = addi", assemble("li x1, 42").words, [0x02A00093])
+    print("\n=== li (1 and 2 instructions) ===")
+    check("small li = addi", assemble("li x1, 42").words, [0x02A00093])
     big = assemble("li x1, 0x12345678")
-    check("li grande = 2 palabras", len(big), 2)
-    check("li grande: lui", big.words[0], 0x123450B7)
-    check("li grande: addi", big.words[1], 0x67808093)
+    check("big li = 2 words", len(big), 2)
+    check("big li: lui", big.words[0], 0x123450B7)
+    check("big li: addi", big.words[1], 0x67808093)
 
-    print("\n=== Lectura de .hex ===")
-    hex_prog = parse_hex("02A00093\n0x06400113  # con prefijo\n\n00208233\n")
-    check("hex: 3 palabras", hex_prog.words,
+    print("\n=== .hex reading ===")
+    hex_prog = parse_hex("02A00093\n0x06400113  # with prefix\n\n00208233\n")
+    check("hex: 3 words", hex_prog.words,
           [0x02A00093, 0x06400113, 0x00208233])
 
-    print("\n=== Serializacion ===")
+    print("\n=== Serialization ===")
     check("to_bytes big-endian", assemble("addi x1, x0, 42").to_bytes(),
           bytes([0x02, 0xA0, 0x00, 0x93]))
 
-    print("\n=== Errores bien reportados ===")
+    print("\n=== Properly reported errors ===")
     for source, fragment in [
-        ("addi x1, x0, 5000", "fuera de rango"),
-        ("addi x1, x99, 1", "registro desconocido"),
-        ("frobnicate x1, x2", "desconocida"),
-        ("beq x1, x2, NOEXISTE", "etiqueta no definida"),
-        ("addi x1, x0", "espera 3 operandos"),
-        ("lw x5, 4 x2", "offset(registro)"),
-        ("beq x1, x2, 7", "debe ser par"),
+        ("addi x1, x0, 5000", "out of range"),
+        ("addi x1, x99, 1", "unknown register"),
+        ("frobnicate x1, x2", "unknown instruction"),
+        ("beq x1, x2, NOEXISTE", "undefined label"),
+        ("addi x1, x0", "expects 3 operands"),
+        ("lw x5, 4 x2", "offset(register)"),
+        ("beq x1, x2, 7", "must be even"),
     ]:
         try:
             assemble(source)
-            check(f"rechaza {source!r}", "no fallo", f"error con {fragment!r}")
+            check(f"rejects {source!r}", "did not fail", f"error with {fragment!r}")
         except AssemblerError as exc:
-            check(f"rechaza {source!r}", fragment in str(exc), True)
+            check(f"rejects {source!r}", fragment in str(exc), True)
 
-    print("\n=== Avisos de lo que esta CPU no ejecuta ===")
-    check("avisa de blt/bgeu (sin implementar)",
+    print("\n=== Warnings for what this CPU does not execute ===")
+    check("warns about blt/bgeu (not implemented)",
           len(assemble("blt x1, x2, 8\nbgeu x1, x2, 8").warnings), 2)
     supported = ("add x1,x2,x3\nsll x1,x2,x3\nslt x1,x2,x3\nxor x1,x2,x3\n"
                  "srai x1,x2,3\nlui x1,1\nbne x1,x2,8\njal x1,8\n"
                  "jalr x1,0(x2)\nlb x1,1(x2)\nsh x1,2(x2)\n")
-    check("no avisa de las 32 del TP", len(assemble(supported).warnings), 0)
+    check("no warnings for the 32 TP instructions", len(assemble(supported).warnings), 0)
 
     print("\n" + "=" * 54)
     if failures:
-        print(f"FALLARON {len(failures)}: {failures}")
+        print(f"FAILED {len(failures)}: {failures}")
         return 1
-    print("TODO OK")
+    print("ALL OK")
     return 0
 
 
