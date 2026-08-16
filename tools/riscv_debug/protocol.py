@@ -73,6 +73,118 @@ ABI_NAMES: tuple[str, ...] = (
 REGISTER_COUNT = 32
 
 
+# =====================================================================
+# Pipeline latches
+# =====================================================================
+# The ids mirror the debug_latch_id case in top.v one by one. Keep both
+# sides in sync: the firmware answers 0x00000000 for an id it does not
+# know, which looks exactly like a real zero, so a wrong id here shows up
+# as a plausible value instead of an error.
+
+LATCH_STAGES: tuple[str, ...] = ("IF/ID", "ID/EX", "EX/MEM", "MEM/WB")
+
+
+@dataclass(frozen=True, slots=True)
+class LatchField:
+    """One field of a pipeline latch, as exposed by REQ_LATCH."""
+
+    id: int
+    stage: str
+    label: str
+    #: How to read the value: hex | instr | ctrl10 | ctrl7 | ctrl3 |
+    #: funct3 | bit | reg
+    kind: str
+
+
+LATCH_FIELDS: tuple[LatchField, ...] = (
+    LatchField(1,  "IF/ID",  "pc",     "hex"),
+    LatchField(2,  "IF/ID",  "pc+4",   "hex"),
+    LatchField(3,  "IF/ID",  "instr",  "instr"),
+
+    LatchField(4,  "ID/EX",  "pc",     "hex"),
+    LatchField(5,  "ID/EX",  "pc+4",   "hex"),
+    LatchField(6,  "ID/EX",  "pc_br",  "hex"),
+    LatchField(7,  "ID/EX",  "ctrl",   "ctrl10"),
+    LatchField(8,  "ID/EX",  "rs1",    "hex"),
+    LatchField(9,  "ID/EX",  "rs2",    "hex"),
+    LatchField(10, "ID/EX",  "imm",    "hex"),
+    LatchField(11, "ID/EX",  "f3",     "funct3"),
+    LatchField(12, "ID/EX",  "bit30",  "bit"),
+    LatchField(13, "ID/EX",  "rd",     "reg"),
+
+    LatchField(14, "EX/MEM", "pc+4",   "hex"),
+    LatchField(15, "EX/MEM", "pc_br",  "hex"),
+    LatchField(16, "EX/MEM", "ctrl",   "ctrl7"),
+    LatchField(17, "EX/MEM", "zero",   "bit"),
+    LatchField(18, "EX/MEM", "result", "hex"),
+    LatchField(19, "EX/MEM", "rs2",    "hex"),
+    LatchField(20, "EX/MEM", "f3",     "funct3"),
+    LatchField(21, "EX/MEM", "rd",     "reg"),
+
+    LatchField(22, "MEM/WB", "ctrl",   "ctrl3"),
+    LatchField(23, "MEM/WB", "rdata",  "hex"),
+    LatchField(24, "MEM/WB", "result", "hex"),
+    LatchField(25, "MEM/WB", "pc+4",   "hex"),
+    LatchField(26, "MEM/WB", "rd",     "reg"),
+)
+
+#: Every id the dashboard asks for, in pipeline order.
+LATCH_IDS: tuple[int, ...] = tuple(f.id for f in LATCH_FIELDS)
+
+
+def latch_fields(stage: str) -> tuple[LatchField, ...]:
+    """The fields of one latch, in the order they are declared."""
+    return tuple(f for f in LATCH_FIELDS if f.stage == stage)
+
+
+#: Where MemtoReg sends the value written to the register file.
+MEM_TO_REG_NAMES = {0: "ALU", 1: "Mem", 2: "PC+4", 3: "?"}
+
+#: Short tags used to render the control bus, with what each one means.
+CONTROL_LEGEND = (
+    "AO=ALUOp  Src=ALUSrc  Br=Branch  MR=MemRead  "
+    "MW=MemWrite  J=Jump  RW=RegWrite  ->=MemtoReg"
+)
+
+
+def decode_control(value: int, width: int) -> str:
+    """
+    Turns a control bus into the list of signals that are asserted.
+
+    `width` is how much of the bus survives at that point of the pipeline:
+    10 bits in ID/EX (the whole thing), 7 in EX/MEM (execute drops ALUOp and
+    ALUSrc) and 3 in MEM/WB (memory keeps only RegWrite and MemtoReg). The
+    bit positions do not move, the bus is just truncated from the top.
+
+    Layout, from control.v:
+        ALUOp[9:8] ALUSrc[7] Branch[6] MemRead[5] MemWrite[4] Jump[3]
+        RegWrite[2] MemtoReg[1:0]
+    """
+    if value == 0:
+        # Every control signal off: nothing this instruction does has an
+        # effect. That is a bubble, from a load-use stall or a flush.
+        return "bubble"
+
+    tags: list[str] = []
+    if width >= 10:
+        tags.append(f"AO={(value >> 8) & 0b11:02b}")
+        if value & (1 << 7):
+            tags.append("Src")
+    if width >= 7:
+        if value & (1 << 6):
+            tags.append("Br")
+        if value & (1 << 5):
+            tags.append("MR")
+        if value & (1 << 4):
+            tags.append("MW")
+        if value & (1 << 3):
+            tags.append("J")
+    if value & (1 << 2):
+        # MemtoReg only means something when the register file is written.
+        tags.append(f"RW->{MEM_TO_REG_NAMES[value & 0b11]}")
+    return " ".join(tags)
+
+
 class ProtocolError(Exception):
     """Malformed frame, or an answer that does not match what was asked."""
 

@@ -74,6 +74,11 @@ async def refresh_state(link: DebugLink, state: CpuState) -> None:
                 state.set_register(number, value)
                 live.update(render_dashboard(state, show_menu=False))
 
+            if state.show_latches:
+                async for latch_id, value in link.read_all_latches():
+                    state.set_latch(latch_id, value)
+                    live.update(render_dashboard(state, show_menu=False))
+
         except (ResponseTimeout, ProtocolError) as exc:
             state.last_error = f"Incomplete read: {exc}"
             state.status = "Communication error"
@@ -242,6 +247,19 @@ async def do_load_program(link: DebugLink, state: CpuState) -> None:
     state.status = "Program loaded"
 
 
+async def do_toggle_latches(link: DebugLink, state: CpuState) -> None:
+    """
+    Shows or hides the pipeline latch panel.
+
+    Turning it on reads the latches right away, so the panel is never shown
+    empty. Turning it off also stops reading them, which halves the time a
+    step takes.
+    """
+    state.show_latches = not state.show_latches
+    if state.show_latches:
+        await refresh_state(link, state)
+
+
 async def do_read_memory(link: DebugLink, state: CpuState) -> None:
     """Reads a word from the data memory (port B, it does not stop the CPU)."""
     raw = await asyncio.to_thread(
@@ -280,6 +298,7 @@ async def interactive_loop(link: DebugLink, state: CpuState) -> None:
         "4": do_load_program,
         "5": refresh_state,
         "6": do_read_memory,
+        "7": do_toggle_latches,
     }
 
     await refresh_state(link, state)
@@ -291,7 +310,7 @@ async def interactive_loop(link: DebugLink, state: CpuState) -> None:
         choice = await asyncio.to_thread(
             Prompt.ask,
             "[bold cyan]Option[/bold cyan]",
-            choices=["1", "2", "3", "4", "5", "6", "q"],
+            choices=["1", "2", "3", "4", "5", "6", "7", "q"],
             default="1",
         )
 

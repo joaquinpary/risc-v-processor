@@ -17,6 +17,7 @@ from serial.tools import list_ports
 from .protocol import (
     ACTION_COMMANDS,
     FRAME_SIZE,
+    LATCH_FIELDS,
     REGISTER_COUNT,
     Command,
     Frame,
@@ -328,6 +329,16 @@ class DebugLink:
         """
         for number in range(REGISTER_COUNT):
             yield number, await self.read_register(number)
+
+    async def read_all_latches(self) -> AsyncIterator[tuple[int, int]]:
+        """
+        Reads every pipeline latch field. Yields (latch id, value).
+
+        Same cost per field as a register, so the 26 fields add roughly
+        220 ms at 9600 baud on top of a register sweep.
+        """
+        for latch in LATCH_FIELDS:
+            yield latch.id, await self.read_latch(latch.id)
 
     # ------------------------------------------------------------------
     # Helpers
