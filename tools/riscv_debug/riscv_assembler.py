@@ -291,6 +291,60 @@ def encode_j(opcode: int, rd: int, imm: int) -> int:
 
 
 # =====================================================================
+# Disassembler
+# =====================================================================
+# Only the mnemonic, which is what the pipeline view needs to say which
+# instruction sits in each stage. The table is built by inverting the ones
+# above, so it can never drift away from the encoder.
+
+
+def _build_decode_table() -> dict[tuple[int, int | None, int | None], str]:
+    table: dict[tuple[int, int | None, int | None], str] = {}
+    for name, (op, f3, f7) in R_TYPE.items():
+        table[(op, f3, f7)] = name
+    for name, (op, f3, f7) in I_SHIFT.items():
+        table[(op, f3, f7)] = name
+    for group in (I_ARITH, I_LOAD, I_JALR, S_TYPE, B_TYPE):
+        for name, (op, f3) in group.items():
+            table[(op, f3, None)] = name
+    for group in (U_TYPE, J_TYPE):
+        for name, op in group.items():
+            table[(op, None, None)] = name
+    return table
+
+
+_DECODE = _build_decode_table()
+
+
+def disassemble(word: int) -> str:
+    """
+    Gives back the mnemonic of an encoded instruction.
+
+    Returns "-" for an all zero word, which is not a real instruction: it is
+    what a flush bubble and empty memory both look like. Returns "?" for
+    anything that does not decode.
+    """
+    word &= 0xFFFFFFFF
+    if word == 0:
+        return "-"
+    if word == 0x00000013:          # addi x0, x0, 0
+        return "nop"
+
+    opcode = word & 0x7F
+    funct3 = (word >> 12) & 0x7
+    funct7 = (word >> 25) & 0x7F
+
+    # U and J have no funct3; then try funct7 (R-type and the shifts, where
+    # it picks the variant) and fall back to opcode+funct3, because for the
+    # rest those upper bits are immediate and mean nothing here.
+    for key in ((opcode, None, None), (opcode, funct3, funct7),
+                (opcode, funct3, None)):
+        if key in _DECODE:
+            return _DECODE[key]
+    return "?"
+
+
+# =====================================================================
 # Assembler
 # =====================================================================
 
@@ -425,7 +479,7 @@ def _resolve_target(token: str, labels: dict[str, int], current: int,
         return labels[token] - current
     if re.match(r"^-?(0[xX])?[0-9A-Fa-f]+$", token) and not token.isalpha():
         return parse_immediate(token, number, source)
-        raise AssemblerError(f"undefined label: {token!r}", number, source)
+    raise AssemblerError(f"undefined label: {token!r}", number, source)
 
 
 def _encode_line(line: _Line, labels: dict[str, int]) -> list[int]:
@@ -685,13 +739,41 @@ def _run_self_test() -> int:
     check("to_bytes big-endian", assemble("addi x1, x0, 42").to_bytes(),
           bytes([0x02, 0xA0, 0x00, 0x93]))
 
+    print("\n=== Disassembler ===")
+    # Round trip: whatever the encoder produces, the decoder must name back.
+    # This is what keeps the pipeline view in the dashboard honest.
+    round_trip = {
+        **{m: f"{m} t0, t1, t2" for m in R_TYPE},
+        **{m: f"{m} t0, t1, 5" for m in I_ARITH},
+        **{m: f"{m} t0, t1, 3" for m in I_SHIFT},
+        **{m: f"{m} t0, 4(t1)" for m in I_LOAD},
+        **{m: f"{m} t0, 4(t1)" for m in S_TYPE},
+        **{m: f"{m} t0, t1, 8" for m in B_TYPE},
+        "jalr": "jalr t0, 0(t1)",
+        "lui": "lui t0, 0x12345",
+        "auipc": "auipc t0, 0x12345",
+        "jal": "jal t0, 8",
+    }
+    wrong = [m for m, text in round_trip.items() if disassemble(one(text)) != m]
+    check(f"round trip of the {len(round_trip)} mnemonics", wrong, [])
+
+    check("all zeros is not an instruction", disassemble(0x00000000), "-")
+    check("addi x0,x0,0 shows as nop", disassemble(0x00000013), "nop")
+    check("garbage does not invent a mnemonic", disassemble(0xFFFFFFFF), "?")
+    # bit30 of a negative immediate belongs to the immediate, not to funct7:
+    # the same trap that alu_control.v has to avoid.
+    check("negative addi is not read as sub",
+          disassemble(one("addi t0, t1, -1")), "addi")
+    check("srai is told apart from srli",
+          disassemble(one("srai t0, t1, 3")), "srai")
+
     print("\n=== Properly reported errors ===")
     for source, fragment in [
         ("addi x1, x0, 5000", "out of range"),
         ("addi x1, x99, 1", "unknown register"),
         ("frobnicate x1, x2", "unknown instruction"),
         ("beq x1, x2, NOEXISTE", "undefined label"),
-        ("addi x1, x0", "expects 3 operands"),
+        ("addi x1, x0", "expects 3 operand(s)"),
         ("lw x5, 4 x2", "offset(register)"),
         ("beq x1, x2, 7", "must be even"),
     ]:
