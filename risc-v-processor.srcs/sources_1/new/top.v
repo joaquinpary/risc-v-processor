@@ -2,7 +2,7 @@
 
 module top #(
     parameter BAUD_RATE = 9600,
-    parameter FREQ      = 100000000 // 100 MHz
+    parameter FREQ      = 50000000
 )(
     input  wire     clk,
     input  wire     reset,
@@ -10,6 +10,22 @@ module top #(
     input  wire     rx_pin,
     output wire     tx_pin
 );
+
+    // =========================================================================
+    // CLOCK WIZARD (100 MHz -> 50 MHz)
+    // =========================================================================
+    wire clk_50mhz;
+    wire pll_locked;
+
+    clock_wizard u_clk_wiz (
+        .clk_in1  (clk),
+        .clk_out1 (clk_50mhz),
+        .reset    (reset),
+        .locked   (pll_locked)
+    );
+
+    // System reset: hold reset until PLL locks, then follow external reset
+    wire sys_reset = reset | ~pll_locked;
 
     // =========================================================================
     // UART INTERFACE <--> DEBUG UNIT
@@ -24,8 +40,8 @@ module top #(
         .BAUD_RATE(BAUD_RATE),
         .FREQ(FREQ)
     ) u_uart_if (
-        .clk            (clk),
-        .reset          (reset),
+        .clk            (clk_50mhz),
+        .reset          (sys_reset),
         .rx_pin_i       (rx_pin),
         .tx_pin_o       (tx_pin),
         .rx_data_40b_o  (rx_data_40b),
@@ -58,8 +74,8 @@ module top #(
     reg     [31:0]  debug_latch_data;
 
     debug_unit u_debug_unit (
-        .clk              (clk),
-        .reset            (reset),
+        .clk              (clk_50mhz),
+        .reset            (sys_reset),
         
         .rx_data_i        (rx_data_40b),
         .rx_done_i        (rx_done_40b),
@@ -84,7 +100,7 @@ module top #(
         .debug_latch_data_i(debug_latch_data)
     );
 
-    wire pipeline_reset = reset | cpu_reset;
+    wire pipeline_reset = sys_reset | cpu_reset;
 
     // =========================================================================
     // HAZARD MITIGATION
@@ -168,7 +184,7 @@ module top #(
     // 3 cycles. See docs/pipeline-depth.md.
     reg         flush_d1;
 
-    always @(posedge clk) begin
+    always @(posedge clk_50mhz) begin
         if (pipeline_reset)
             flush_d1 <= 1'b0;
         else if (cpu_enable)
@@ -259,7 +275,7 @@ module top #(
 
     // ===== IF stage =====
     instruction_fetch u_if (
-        .clk            (clk),
+        .clk            (clk_50mhz),
         .reset          (pipeline_reset),
         // The branch has priority over the stall freeze
         .pc_write_en_i  (cpu_enable & (pc_write | branch_taken_ex)),
@@ -279,7 +295,7 @@ module top #(
     reg  [31:0] instr_skid;
     reg         instr_skid_valid;
 
-    always @(posedge clk) begin
+    always @(posedge clk_50mhz) begin
         if (pipeline_reset) begin
             instr_skid       <= 32'b0;
             instr_skid_valid <= 1'b0;
@@ -347,7 +363,7 @@ module top #(
     // The flush has priority over the stall freeze (if_id_write). In practice
     // they cannot happen together -an instruction in EX cannot be a load and a
     // branch at once- but the right order keeps it safe against future changes.
-    always @(posedge clk) begin
+    always @(posedge clk_50mhz) begin
         if (pipeline_reset) begin
             pc_id           <= 32'b0;
             pc_plus_4_id    <= 32'b0;
@@ -371,7 +387,7 @@ module top #(
 
     // ===== ID stage =====
     instruction_decode u_id (
-        .clk             (clk),
+        .clk             (clk_50mhz),
         .reset           (pipeline_reset),
         .pc_i            (pc_id),
         .pc_plus_4_i     (pc_plus_4_id),
@@ -395,7 +411,7 @@ module top #(
     );
 
     // ===== ID/EX latch =====
-    always @(posedge clk) begin
+    always @(posedge clk_50mhz) begin
         if (pipeline_reset) begin
             pc_ex           <= 32'b0;
             pc_plus_4_ex    <= 32'b0;
@@ -465,7 +481,7 @@ module top #(
     );
 
     // ===== EX/MEM latch =====
-    always @(posedge clk) begin
+    always @(posedge clk_50mhz) begin
         if (pipeline_reset) begin
             pc_plus_4_mem   <= 32'b0;
             pc_branch_mem   <= 32'b0;
@@ -489,7 +505,7 @@ module top #(
 
     // ===== MEM stage =====
     memory u_mem (
-        .clk           (clk),
+        .clk           (clk_50mhz),
         .reset         (pipeline_reset),
         .enable_i      (cpu_enable),
         // Word index, same as the processor port: the address the dashboard
@@ -515,7 +531,7 @@ module top #(
     );
 
     // ===== MEM/WB latch =====
-    always @(posedge clk) begin
+    always @(posedge clk_50mhz) begin
         if (pipeline_reset) begin
             control_wb      <= 3'b0;
             funct3_wb       <= 3'b0;
