@@ -17,7 +17,7 @@ module register (
     reg [31:0] regs [0:31];
 
     integer i;
-    always @(negedge clk) begin
+    always @(posedge clk) begin
         if (reset) begin
             for (i = 0; i < 32; i = i + 1)
                 regs[i] <= 32'b0;
@@ -26,8 +26,10 @@ module register (
         end
     end
 
-    assign read_data1 = (rs1 == 5'b00000) ? 32'b0 : regs[rs1];
-    assign read_data2 = (rs2 == 5'b00000) ? 32'b0 : regs[rs2];
+    assign read_data1 = (rs1 == 5'b00000) ? 32'b0 :
+                        (reg_write && rd == rs1) ? write_data : regs[rs1];
+    assign read_data2 = (rs2 == 5'b00000) ? 32'b0 :
+                        (reg_write && rd == rs2) ? write_data : regs[rs2];
     
     assign debug_reg_data_o = (debug_reg_addr_i == 5'b00000) ? 32'b0: regs[debug_reg_addr_i];
 
