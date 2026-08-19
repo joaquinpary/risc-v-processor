@@ -142,17 +142,110 @@ async def do_reset(link: DebugLink, state: CpuState) -> None:
     state.status = "Reset"
 
 
+#: Extensions the dashboard offers to load.
+PROGRAM_SUFFIXES = (".s", ".asm", ".hex")
+
+
+def discover_programs() -> list[Path]:
+    """
+    Programs the dashboard can offer without the user typing a path.
+
+    Looks in the examples directory of the checkout and in the directory the
+    dashboard was launched from, so it works both from inside the repo and
+    from anywhere else. Duplicates are dropped by resolved path.
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    roots = [repo_root / "examples", Path.cwd(), Path.cwd() / "examples"]
+
+    found: dict[Path, None] = {}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.iterdir()):
+            if path.is_file() and path.suffix.lower() in PROGRAM_SUFFIXES:
+                found[path.resolve()] = None
+    return list(found)
+
+
+def _short_path(path: Path) -> str:
+    """Path with the home directory collapsed to ~, to keep the table narrow."""
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
+def _program_size(path: Path) -> str:
+    """Instruction count, or '?' if the file does not assemble."""
+    try:
+        return str(len(load_file(path)))
+    except (AssemblerError, OSError):
+        return "?"
+
+
+def _ask_for_program(programs: list[Path]) -> Path | None:
+    """
+    Shows the programs found and asks which one to load.
+
+    Blocking on purpose: the caller runs it in a thread, like every other
+    prompt here. Returns None if the user cancels.
+    """
+    if programs:
+        # Almost always every program sits in the same directory. Repeating it
+        # on each row only pushes the useful columns off the screen, so it goes
+        # in the subtitle and the column appears only when they really differ.
+        directories = {path.parent for path in programs}
+        one_place = len(directories) == 1
+
+        table = Table(show_header=True, header_style="bold magenta", box=None,
+                      pad_edge=False, padding=(0, 2))
+        table.add_column("#", style="bold cyan", justify="right")
+        table.add_column("Program")
+        table.add_column("Instr", justify="right")
+        if not one_place:
+            table.add_column("Directory", style="dim")
+
+        for index, path in enumerate(programs, start=1):
+            row = [str(index), path.name, _program_size(path)]
+            if not one_place:
+                row.append(_short_path(path.parent))
+            table.add_row(*row)
+
+        subtitle = f"[dim]{_short_path(directories.pop())}[/dim]" if one_place else None
+        console.print(Panel(table, title="[bold]Programs found[/bold]",
+                            subtitle=subtitle, border_style="cyan"))
+
+    choices = [str(i) for i in range(1, len(programs) + 1)] + ["o", "c"]
+    answer = Prompt.ask(
+        "[cyan]Program[/cyan]  (number | [bold]o[/bold]ther path | [bold]c[/bold]ancel)",
+        choices=choices,
+        default="1" if programs else "o",
+        show_choices=False,
+    )
+
+    if answer == "c":
+        return None
+    if answer == "o":
+        raw = Prompt.ask("[cyan]Path[/cyan] (.s / .asm / .hex)", default="")
+        text = raw.strip().strip('"').strip("'")
+        return Path(text).expanduser() if text else None
+    return programs[int(answer) - 1]
+
+
 async def do_load_program(link: DebugLink, state: CpuState) -> None:
     """
     Assembles a .s/.asm/.hex file and loads it into the instruction memory.
 
+    The file is picked from a numbered list of what is on disk, so a demo does
+    not depend on typing a path correctly; typing one is still offered.
+
     When it finishes it sends a RESET (included in link.load_program) to leave
     the PC at 0 and the pipeline ready, and re-reads the state.
     """
-    raw = await asyncio.to_thread(
-        Prompt.ask, "[cyan]File[/cyan] (.s / .asm / .hex)"
-    )
-    path = Path(raw.strip().strip('"').strip("'")).expanduser()
+    programs = await asyncio.to_thread(discover_programs)
+    path = await asyncio.to_thread(_ask_for_program, programs)
+    if path is None:
+        return
 
     # ---- Assembly ----
     try:
