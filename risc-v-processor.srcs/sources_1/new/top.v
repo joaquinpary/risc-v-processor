@@ -2,7 +2,7 @@
 
 module top #(
     parameter BAUD_RATE = 9600,
-    parameter FREQ      = 50000000
+    parameter FREQ      = 62000000
 )(
     input  wire     clk,
     input  wire     reset,
@@ -12,7 +12,7 @@ module top #(
 );
 
     // =========================================================================
-    // CLOCK WIZARD (100 MHz -> 50 MHz)
+    // CLOCK WIZARD (100 MHz -> 62 MHz)
     // =========================================================================
     wire clk_50mhz;
     wire pll_locked;
