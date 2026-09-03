@@ -11,7 +11,6 @@ from rich.table import Table
 from rich.text import Text
 
 from .protocol import (
-    ABI_NAMES,
     CONTROL_LEGEND,
     LATCH_IDS,
     LATCH_STAGES,
@@ -139,8 +138,11 @@ def render_registers(state: CpuState) -> Panel:
     """
     Table of the 32 registers in 2 columns of 16 rows.
 
-    The left column holds x0..x15 and the right one x16..x31. The registers
+    The left column holds x0..x15 and the right one x16..x31, and the ones
     that changed since the previous step are highlighted in yellow.
+
+    Registers are named by number alone. The ABI aliases (t0, s0...) are
+    still accepted when writing assembly, they are just not shown here.
     """
     table = Table(
         show_header=True,
@@ -150,7 +152,7 @@ def render_registers(state: CpuState) -> Panel:
         padding=(0, 1),
     )
     for _ in range(2):
-        table.add_column("Reg", style="dim", width=10)
+        table.add_column("Reg", style="dim", width=5)
         table.add_column("Hex", justify="right", width=8)
         table.add_column("Dec", justify="right", width=12)
 
@@ -161,7 +163,6 @@ def render_registers(state: CpuState) -> Panel:
             highlight = number in state.changed
 
             name = Text(f"x{number}", style="bold" if highlight else "dim")
-            name.append(f" {ABI_NAMES[number]}", style="dim italic")
 
             value_style = (
                 "bold yellow"
@@ -194,8 +195,8 @@ def _format_latch(latch: LatchField, value: int | None) -> tuple[str, str, bool]
 
     Each field is shown the way it is actually used: an instruction with its
     mnemonic, a control bus with the signals it asserts, rd as a register
-    name. Showing all of them as plain hex would hide exactly what one wants
-    to see when following an instruction through the pipeline.
+    number. Showing all of them as plain hex would hide exactly what one
+    wants to see when following an instruction through the pipeline.
     """
     if value is None:
         return "--------", "", True
@@ -203,8 +204,7 @@ def _format_latch(latch: LatchField, value: int | None) -> tuple[str, str, bool]
     if latch.kind == "instr":
         return f"0x{value:08X}", disassemble(value), True
     if latch.kind == "reg":
-        number = value & 0x1F
-        return f"x{number}", ABI_NAMES[number], True
+        return f"x{value & 0x1F}", "", True
     if latch.kind == "bit":
         return str(value & 1), "", True
     if latch.kind == "funct3":
