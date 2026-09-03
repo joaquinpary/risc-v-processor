@@ -54,6 +54,10 @@ Cada registro tiene un número (`x0` a `x31`) y un nombre por convención:
 | `x18`–`x27` | `s2`–`s11` | Guardados |
 | `x28`–`x31` | `t3`–`t6` | Temporales |
 
+> Los programas de demostración y el dashboard usan **siempre la numeración
+> `x0`–`x31`**. Los alias siguen siendo válidos al escribir código —el
+> ensamblador los acepta— pero no aparecen en pantalla.
+
 **`x0` es especial y te lo pueden preguntar.** Vale cero siempre, por
 hardware. Sirve para muchos trucos: `addi x5, x0, 42` carga la constante
 42 (sumarle 42 a cero), y `add x0, x1, x2` es una operación que no hace
@@ -107,10 +111,10 @@ bits), se definieron **seis maneras de repartirlo**:
 Todas tienen la misma forma: `operación rd, rs1, rs2` → toma dos
 registros, opera, guarda en un tercero.
 
-| Instrucción | Qué hace | Ejemplo (`t1=8`, `t2=2`) |
+| Instrucción | Qué hace | Ejemplo (`x6=8`, `x7=2`) |
 |---|---|---|
-| `add rd, rs1, rs2` | Suma | `add t0,t1,t2` → `t0 = 10` |
-| `sub rd, rs1, rs2` | Resta | `sub t0,t1,t2` → `t0 = 6` |
+| `add rd, rs1, rs2` | Suma | `add x5,x6,x7` → `x5 = 10` |
+| `sub rd, rs1, rs2` | Resta | `sub x5,x6,x7` → `x5 = 6` |
 | `and rd, rs1, rs2` | Y lógico bit a bit | `8 AND 2 = 0` |
 | `or rd, rs1, rs2` | O lógico bit a bit | `8 OR 2 = 10` |
 | `xor rd, rs1, rs2` | O exclusivo bit a bit | `8 XOR 2 = 10` |
@@ -130,7 +134,7 @@ positivo (mal); rellenar con el bit de signo mantiene el número negativo
 `slt` contra `sltu` — el mismo patrón de bits significa cosas distintas.
 `0xFFFFFFF0` es **−16** con signo y **4294967280** sin signo. Con signo
 es menor que cero; sin signo es enorme. Nuestro `demo_1_alu` lo muestra:
-`s8 = 1` (slt) y `s9 = 0` (sltu), con el mismo operando.
+`x24 = 1` (slt) y `x25 = 0` (sltu), con el mismo operando.
 
 ### 3.2 Aritmética con constante (tipo I) — 9 instrucciones
 
@@ -170,8 +174,8 @@ registro de 32 bits. Si el byte es `0xFF`:
 - Como **número sin signo**, `0xFF` es 255 → se completa con ceros:
   `0x000000FF` = 255. Eso hace `lbu`.
 
-Nuestro `demo_2_memoria` lo muestra: el mismo byte da `s3 = −1` con `lb`
-y `s4 = 255` con `lbu`.
+Nuestro `demo_2_memoria` lo muestra: el mismo byte da `x19 = −1` con `lb`
+y `x20 = 255` con `lbu`.
 
 ### 3.4 Almacenamientos — guardar de registro a memoria (3 instrucciones)
 
@@ -191,7 +195,7 @@ palabras de 4 bytes. Para escribir **un solo byte** hay que decirle a la
 memoria "escribí sólo este byte y dejá los otros tres como están". Eso se
 hace con una **máscara de escritura por byte**, y hay que desplazarla
 según cuál de los 4 bytes toca. Es la parte del trabajo que llamamos
-"accesos de sub-palabra". `demo_2_memoria` lo demuestra: `s5 =
+"accesos de sub-palabra". `demo_2_memoria` lo demuestra: `x21 =
 0x0000FF00`, un byte escrito en el medio y los otros tres intactos.
 
 ### 3.5 Saltos condicionales (tipo B) — 2 instrucciones
@@ -223,8 +227,8 @@ Problema: `addi` sólo llega a 12 bits (hasta 2047). ¿Cómo cargás
 bits en la **parte alta** del registro y ceros abajo:
 
 ```asm
-lui  t0, 0x12345      # t0 = 0x12345000
-addi t0, t0, 0x678    # t0 = 0x12345678
+lui  x5, 0x12345      # x5 = 0x12345000
+addi x5, x5, 0x678    # x5 = 0x12345678
 ```
 
 Entre las dos arman cualquier número de 32 bits.
@@ -591,13 +595,13 @@ completa con ceros. El mismo byte `0xFF` da −1 con `lb` y 255 con `lbu`.
 ## Parte 10 — Guion para la demostración
 
 1. **`demo_1_alu`** con **Run** → las 10 operaciones. Señalar
-   `s7 = −8` (sra) contra `s6 = 4` (srl): mismo desplazamiento, distinto
-   relleno. Y `s8 = 1` (slt) contra `s9 = 0` (sltu): mismo número, una
+   `x23 = −8` (sra) contra `x22 = 4` (srl): mismo desplazamiento, distinto
+   relleno. Y `x24 = 1` (slt) contra `x25 = 0` (sltu): mismo número, una
    comparación con signo y otra sin.
 
-2. **`demo_2_memoria`** → mostrar `s5 = 0x0000FF00`: se escribió **un
+2. **`demo_2_memoria`** → mostrar `x21 = 0x0000FF00`: se escribió **un
    solo byte** en el medio de una palabra y los otros tres quedaron
-   intactos. Y `s3 = −1` contra `s4 = 255`, el mismo byte leído con y sin
+   intactos. Y `x19 = −1` contra `x20 = 255`, el mismo byte leído con y sin
    signo.
 
 3. **`demo_3_saltos`** con **Step**, con el panel de latches abierto →
@@ -606,9 +610,9 @@ completa con ceros. El mismo byte `0xFF` da −1 con `lb` y 255 con `lbu`.
    `t2`, `t3` y `s5` quedaron en **cero**: esas instrucciones se
    buscaron y se descartaron.
 
-4. **`demo_4_riesgos`** → `a3 = 50`. Explicar que ahí el adelantamiento
+4. **`demo_4_riesgos`** → `x13 = 50`. Explicar que ahí el adelantamiento
    no alcanzaba y el pipeline tuvo que frenar un ciclo.
 
 5. **`demo_5_suma`** con **Run** → un algoritmo de verdad: guarda cinco
    números en memoria, los recorre con un puntero y los suma.
-   `a0 = 150`.
+   `x10 = 150`.
