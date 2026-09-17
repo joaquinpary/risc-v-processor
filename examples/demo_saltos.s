@@ -34,8 +34,6 @@ FIN:    addi  x22, x0, 1          # x22 = 1
         nop
         nop
 
-# Relleno hasta 28 palabras: asi todos los demos ocupan lo mismo
-# y cargar uno sobre otro nunca deja instrucciones del anterior.
         nop
         nop
         nop

@@ -394,7 +394,7 @@ module top #(
         .instruction_i   (instruction_id),
         .rd_i            (rd_wb),
         .reg_data_i      (reg_data_wb),
-        .reg_write_i     (reg_write_wb),
+        .reg_write_i     (reg_write_wb & cpu_enable),
         .debug_reg_addr_i({1'b0, debug_reg_addr}),
         .debug_reg_data_o(debug_reg_data),
         .pc_o            (pc_o_id),

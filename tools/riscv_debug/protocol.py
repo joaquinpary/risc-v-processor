@@ -103,7 +103,9 @@ LATCH_FIELDS: tuple[LatchField, ...] = (
 
     LatchField(4,  "ID/EX",  "pc",     "hex"),
     LatchField(5,  "ID/EX",  "pc+4",   "hex"),
-    LatchField(6,  "ID/EX",  "pc_br",  "hex"),
+    # El destino de salto se calcula en EX, asi que su lugar es EX/MEM (id 15).
+    # El id 6 existe en el hardware pero duplicaba ese mismo valor con un ciclo
+    # de desfasaje respecto al pc/imm de su propia columna, asi que no se muestra.
     LatchField(7,  "ID/EX",  "ctrl",   "ctrl10"),
     LatchField(8,  "ID/EX",  "rs1",    "hex"),
     LatchField(9,  "ID/EX",  "rs2",    "hex"),
