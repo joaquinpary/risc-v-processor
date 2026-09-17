@@ -17,6 +17,7 @@ from serial.tools import list_ports
 from .protocol import (
     ACTION_COMMANDS,
     FRAME_SIZE,
+    LATCH_FIELDS,
     REGISTER_COUNT,
     Command,
     Frame,
@@ -97,7 +98,7 @@ class DebugLink:
                 self._serial = await asyncio.to_thread(serial.Serial, **options)
         except (serial.SerialException, ValueError, OSError) as exc:
             raise PortUnavailable(
-                f"No se pudo abrir {self.port} a {self.baudrate} baudios: {exc}"
+                f"Could not open {self.port} at {self.baudrate} baud: {exc}"
             ) from exc
 
         # Drop stale bytes from a previous session.
@@ -126,7 +127,7 @@ class DebugLink:
     # ------------------------------------------------------------------
     def _require_port(self) -> serial.Serial:
         if self._serial is None or not self._serial.is_open:
-            raise PortUnavailable("El puerto no está abierto")
+            raise PortUnavailable("Port is not open")
         return self._serial
 
     async def _write_frame(self, command: int, payload: int) -> None:
@@ -135,7 +136,7 @@ class DebugLink:
             await asyncio.to_thread(port.write, encode(command, payload))
             await asyncio.to_thread(port.flush)
         except serial.SerialException as exc:
-            raise DebugLinkError(f"Fallo al escribir en {self.port}: {exc}") from exc
+            raise DebugLinkError(f"Failed to write to {self.port}: {exc}") from exc
 
     async def _read_frame(self, timeout: float | None = None) -> Frame:
         port = self._require_port()
@@ -144,13 +145,13 @@ class DebugLink:
         try:
             raw = await asyncio.to_thread(port.read, FRAME_SIZE)
         except serial.SerialException as exc:
-            raise DebugLinkError(f"Fallo al leer de {self.port}: {exc}") from exc
+            raise DebugLinkError(f"Failed to read from {self.port}: {exc}") from exc
         finally:
             port.timeout = self.timeout
 
         if len(raw) < FRAME_SIZE:
             raise ResponseTimeout(
-                f"Respuesta incompleta: {len(raw)}/{FRAME_SIZE} bytes"
+                f"Incomplete response: {len(raw)}/{FRAME_SIZE} bytes"
             )
         return decode(raw)
 
@@ -201,7 +202,7 @@ class DebugLink:
             await asyncio.to_thread(port.write, data)
             await asyncio.to_thread(port.flush)
         except serial.SerialException as exc:
-            raise DebugLinkError(f"Fallo al escribir en {self.port}: {exc}") from exc
+            raise DebugLinkError(f"Failed to write to {self.port}: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Action commands (no answer)
@@ -284,8 +285,8 @@ class DebugLink:
         if frame.code != expected_code:
             await self.resync()
             raise ProtocolError(
-                f"Respuesta inesperada a {command.name}: se esperaba código "
-                f"0x{expected_code:02X} y llegó 0x{frame.code:02X}"
+                f"Unexpected response to {command.name}: expected code "
+                f"0x{expected_code:02X}, got 0x{frame.code:02X}"
             )
         return frame.payload
 
@@ -298,7 +299,7 @@ class DebugLink:
         something got out of sync.
         """
         if not 0 <= number < REGISTER_COUNT:
-            raise ValueError(f"Registro fuera de rango: {number}")
+            raise ValueError(f"Register out of range: {number}")
         return await self._request(Command.REQ_REG, number, expected_code=number)
 
     async def read_pc(self, timeout: float | None = None) -> int:
@@ -328,6 +329,16 @@ class DebugLink:
         """
         for number in range(REGISTER_COUNT):
             yield number, await self.read_register(number)
+
+    async def read_all_latches(self) -> AsyncIterator[tuple[int, int]]:
+        """
+        Reads every pipeline latch field. Yields (latch id, value).
+
+        Same cost per field as a register, so the 26 fields add roughly
+        220 ms at 9600 baud on top of a register sweep.
+        """
+        for latch in LATCH_FIELDS:
+            yield latch.id, await self.read_latch(latch.id)
 
     # ------------------------------------------------------------------
     # Helpers
